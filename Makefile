@@ -22,11 +22,13 @@ test-ci:
 
 
 build: clean generate
+	go build -o="./bin/borg-drone" ./borg-collective/cmd/drone
 	go build -o="./bin/cred" ./credentials/cmd/cli
 	go build -o="./bin/credstore" ./credentials/cmd/store
 
 
 build-ci: generate
+	go build -o="./bin/borg-drone-$(SUFFIX)" -ldflags="-s -w -X main.version=$(VERSION)" ./borg-collective/cmd/drone
 	go build -o="./bin/cred-$(SUFFIX)" -ldflags="-s -w -X main.version=$(VERSION)" ./credentials/cmd/cli
 	go build -o="./bin/credstore-$(SUFFIX)" -ldflags="-s -w -X main.version=$(VERSION)" ./credentials/cmd/store
 

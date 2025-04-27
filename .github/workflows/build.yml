@@ -32,6 +32,13 @@ jobs:
       - name: Setup Go CTRF Json Reporter
         run: go install github.com/ctrf-io/go-ctrf-json-reporter/cmd/go-ctrf-json-reporter@latest
 
+      - name: Download Borg
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          echo "PATH=$PATH:$HOME/.local/bin" >> "$GITHUB_ENV"
+          
+          curl -L -o "$HOME/.local/bin/borg" https://github.com/borgbackup/borg/releases/download/1.4.1/borg-linux-glibc228
+
       - name: Run tests
         run: make test-ci
 
