@@ -19,9 +19,7 @@ import (
 	"errors"
 	"github.com/docker/docker/api/types/container"
 	"github.com/robfig/cron/v3"
-	"github.com/vemilyus/borg-collective/internal/drone"
 	"strconv"
-	"sync"
 )
 
 type BackupMode int8
@@ -58,47 +56,22 @@ func BackupModeFromString(s string) (BackupMode, error) {
 	return -1, errors.New("unrecognized backup mode: " + s)
 }
 
-type Backups struct {
-	lock              sync.RWMutex
-	ContainerBackups  []*ContainerBackupProject
-	ConfiguredBackups []drone.BackupConfig
-}
-
-func NewBackups(containerBackups []*ContainerBackupProject, configuredBackups []drone.BackupConfig) *Backups {
-	return &Backups{
-		lock:              sync.RWMutex{},
-		ContainerBackups:  containerBackups,
-		ConfiguredBackups: configuredBackups,
-	}
-}
-
-func (b *Backups) ReadAction(action func(*Backups)) {
-	b.lock.RLock()
-	defer b.lock.RUnlock()
-
-	action(b)
-}
-
-func (b *Backups) WriteAction(action func(*Backups)) {
-	b.lock.Lock()
-	defer b.lock.Unlock()
-
-	action(b)
-}
-
 type ContainerBackupProject struct {
 	ProjectName string
 	Schedule    cron.Schedule
 	JobId       *cron.EntryID
-	Containers  []ContainerBackup
+	Containers  map[string]ContainerBackup
 }
 
 type ContainerBackup struct {
-	ContainerName string
-	Mode          BackupMode
-	Exec          *ContainerExecBackup
-	Volumes       []container.MountPoint
-	Dependencies  []string
+	ID           string
+	ServiceName  string
+	Mode         BackupMode
+	UpperDirPath string
+	Exec         *ContainerExecBackup
+	Volumes      []container.MountPoint
+	AllVolumes   []container.MountPoint
+	Dependencies []string
 }
 
 type ContainerExecBackup struct {

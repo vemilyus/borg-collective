@@ -36,6 +36,22 @@ func TestRunInit(t *testing.T) {
 	println(string(b))
 }
 
+func TestRunCreateWithPaths(t *testing.T) {
+	unsecureBorg := createTmpBorg(t, nil, nil)
+	err := unsecureBorg.runInit()
+	assert.Nil(t, err)
+
+	// TODO
+}
+
+func TestRunCreateWithInput(t *testing.T) {
+	unsecureBorg := createTmpBorg(t, nil, nil)
+	err := unsecureBorg.runInit()
+	assert.Nil(t, err)
+
+	// TODO
+}
+
 func createTmpBorg(t *testing.T, backups []*drone.BackupConfig, secret *string) *Borg {
 	tmpDir := t.TempDir()
 	repo := t.TempDir()

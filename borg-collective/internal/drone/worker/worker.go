@@ -21,7 +21,6 @@ import (
 	"github.com/vemilyus/borg-collective/internal/drone"
 	"github.com/vemilyus/borg-collective/internal/drone/borg"
 	"github.com/vemilyus/borg-collective/internal/drone/docker"
-	"github.com/vemilyus/borg-collective/internal/drone/model"
 )
 
 type Worker struct {
@@ -32,12 +31,12 @@ type Worker struct {
 }
 
 func New(scheduler *cron.Cron, config *drone.Config) (*Worker, error) {
-	dc, err := client.NewClientWithOpts(client.FromEnv)
+	b, err := borg.New(config)
 	if err != nil {
 		return nil, err
 	}
 
-	b, err := borg.New(config)
+	dc, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -48,42 +47,21 @@ func New(scheduler *cron.Cron, config *drone.Config) (*Worker, error) {
 }
 
 func (w *Worker) Start() error {
+	if w.config.Repo.CompactionScheduleParsed() != nil {
+		w.scheduler.Schedule(w.config.Repo.CompactionScheduleParsed(), borg.Wrap(w.b.Compact()))
+	}
+
 	var configuredBackups []drone.BackupConfig
 	for _, backup := range w.config.Backups {
 		configuredBackups = append(configuredBackups, *backup)
 	}
 
-	containerBackupProjects, err := w.d.CreateBackupProjects()
+	err := w.b.ScheduleBackups(configuredBackups, w.scheduler)
 	if err != nil {
 		return err
 	}
 
-	err = w.b.ScheduleBackups(configuredBackups, w.scheduler)
-	if err != nil {
-		return err
-	}
+	w.scheduler.Start()
 
-	err = w.d.ScheduleBackups(containerBackupProjects)
-	if err != nil {
-		return err
-	}
-
-	backups := model.NewBackups(containerBackupProjects, configuredBackups)
-
-	c := make(chan bool, 1)
-	go func() {
-		err = w.d.Listen(backups)
-		c <- true
-	}()
-
-	if w.config.Repo.CompactionScheduleParsed() != nil {
-		w.scheduler.Schedule(w.config.Repo.CompactionScheduleParsed(), borg.Wrap(w.b.Compact()))
-	}
-
-	_, ok := <-c
-	if !ok {
-		panic("channel closed")
-	}
-
-	return err
+	return w.d.Start()
 }

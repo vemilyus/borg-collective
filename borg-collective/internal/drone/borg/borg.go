@@ -152,8 +152,8 @@ func (b *Borg) buildExecAction(baseName string, backup drone.ExecBackupConfig) (
 	if actualStdout {
 		return b.BuildArchiveStdoutAction(
 			baseName,
-			func() (io.Reader, error, chan error) {
-				cmd := exec.Command(backup.Command[0], backup.Command[1:]...)
+			func(ctx context.Context) (io.Reader, error, chan error) {
+				cmd := exec.CommandContext(ctx, backup.Command[0], backup.Command[1:]...)
 				stdout, err := cmd.StdoutPipe()
 				if err != nil {
 					return nil, err, nil
@@ -190,17 +190,17 @@ func (b *Borg) buildExecAction(baseName string, backup drone.ExecBackupConfig) (
 	}
 }
 
-func (b *Borg) BuildArchiveStdoutAction(baseName string, stdout func() (io.Reader, error, chan error)) (Action, error) {
+func (b *Borg) BuildArchiveStdoutAction(baseName string, stdout func(context.Context) (io.Reader, error, chan error)) (Action, error) {
 	return &closureAction{
 		id: rand.Text(),
 		action: func(self Action) error {
-			input, err, errChan := stdout()
+			ctx, cancelContext := context.WithCancel(context.Background())
+			defer cancelContext()
+
+			input, err, errChan := stdout(ctx)
 			if err != nil {
 				return err
 			}
-
-			ctx, cancelContext := context.WithCancel(context.Background())
-			defer cancelContext()
 
 			done := make(chan error, 1)
 
