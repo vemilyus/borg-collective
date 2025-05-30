@@ -16,7 +16,7 @@ test: generate
 	go test ./credentials/...
 
 
-test-ci:
+test-ci: generate
 	go test -json ./credentials/... \
 		| go-ctrf-json-reporter -output ctrf-report.json
 
