@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package drone
+package config
 
 import (
 	"errors"
@@ -23,11 +23,17 @@ import (
 	"os"
 )
 
+var (
+	DryRun  = false
+	Once    = false
+	Verbose = false
+)
+
 type Config struct {
 	Options    *OptionsConfig
 	Repo       RepositoryConfig
 	Encryption *EncryptionConfig
-	Backups    []*BackupConfig
+	Backups    []BackupConfig
 }
 
 type OptionsConfig struct {
@@ -37,11 +43,11 @@ type OptionsConfig struct {
 type RepositoryConfig struct {
 	Location                 string
 	IdentityFile             *string
-	CompactionSchedule       *string
+	CompactionScheduleValue  *string `toml:"CompactionSchedule"`
 	compactionScheduleParsed cron.Schedule
 }
 
-func (rc *RepositoryConfig) CompactionScheduleParsed() cron.Schedule {
+func (rc RepositoryConfig) CompactionSchedule() cron.Schedule {
 	return rc.compactionScheduleParsed
 }
 
@@ -52,7 +58,7 @@ type EncryptionConfig struct {
 
 type BackupConfig struct {
 	Name           string
-	Schedule       string
+	ScheduleValue  string `toml:"Schedule"`
 	scheduleParsed cron.Schedule
 	Exec           *ExecBackupConfig
 	Paths          *PathsBackupConfig
@@ -61,7 +67,7 @@ type BackupConfig struct {
 	FinallyCommand []string
 }
 
-func (bc *BackupConfig) ScheduleParsed() cron.Schedule {
+func (bc BackupConfig) Schedule() cron.Schedule {
 	return bc.scheduleParsed
 }
 
@@ -90,10 +96,10 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if conf.Repo.CompactionSchedule != nil {
-		schedule, err := cron.ParseStandard(*conf.Repo.CompactionSchedule)
+	if conf.Repo.CompactionScheduleValue != nil {
+		schedule, err := cron.ParseStandard(*conf.Repo.CompactionScheduleValue)
 		if err != nil {
-			return nil, fmt.Errorf("invalid compaction schedule %s: %v", *conf.Repo.CompactionSchedule, err)
+			return nil, fmt.Errorf("invalid compaction schedule %s: %v", *conf.Repo.CompactionScheduleValue, err)
 		}
 
 		conf.Repo.compactionScheduleParsed = schedule
@@ -106,9 +112,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	for _, backup := range conf.Backups {
-		schedule, err := cron.ParseStandard(backup.Schedule)
+		schedule, err := cron.ParseStandard(backup.ScheduleValue)
 		if err != nil {
-			return nil, fmt.Errorf("invalid backup schedule for %s (%s): %v", backup.Name, backup.Schedule, err)
+			return nil, fmt.Errorf("invalid backup schedule for %s (%s): %v", backup.Name, backup.ScheduleValue, err)
 		}
 
 		backup.scheduleParsed = schedule

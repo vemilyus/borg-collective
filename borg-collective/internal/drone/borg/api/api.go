@@ -16,6 +16,8 @@
 package api
 
 import (
+	"fmt"
+
 	"github.com/rs/zerolog"
 )
 
@@ -32,6 +34,28 @@ const (
 	ReturnCodeConnectionClosed         ReturnCode = 80
 	ReturnCodeConnectionClosedWithHint ReturnCode = 81
 )
+
+type Error struct {
+	returnCode ReturnCode
+}
+
+func NewError(returnCode ReturnCode) *Error {
+	return &Error{returnCode: returnCode}
+}
+
+func (e *Error) Error() string {
+	return fmt.Sprintf("borg error: %v", e.returnCode)
+}
+
+func (e *Error) IsRecoverable() bool {
+	return e.returnCode == ReturnCodeSuccess ||
+		e.returnCode == ReturnCodeWarning ||
+		e.returnCode == ReturnCodeRepositoryDoesNotExist
+}
+
+func (e *Error) ReturnCode() ReturnCode {
+	return e.returnCode
+}
 
 type LogMessage interface {
 	Level() zerolog.Level

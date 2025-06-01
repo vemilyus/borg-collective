@@ -2,12 +2,13 @@ package logging
 
 import (
 	"fmt"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	golog "log"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 type zerologLogger struct {
@@ -22,12 +23,12 @@ func (z *zerologLogger) Write(p []byte) (n int, err error) {
 }
 
 func InitLogging() {
-	logWriter := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: true}
-	logWriter.FormatLevel = func(i interface{}) string {
+	consoleWriter := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: true}
+	consoleWriter.FormatLevel = func(i interface{}) string {
 		return strings.ToUpper(fmt.Sprintf("| %5s |", i))
 	}
 
-	initLogging(logWriter)
+	initLogging(consoleWriter)
 }
 
 func initLogging(logWriter zerolog.ConsoleWriter) {

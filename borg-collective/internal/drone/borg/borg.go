@@ -17,18 +17,18 @@ package borg
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Masterminds/semver/v3"
-	"github.com/robfig/cron/v3"
-	"github.com/rs/zerolog/log"
-	"github.com/vemilyus/borg-collective/internal/drone"
 	"io"
 	"os/exec"
-	"regexp"
-	"time"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/rs/zerolog/log"
+	"github.com/vemilyus/borg-collective/internal/drone/borg/api"
+	"github.com/vemilyus/borg-collective/internal/drone/config"
 )
 
 var (
@@ -36,231 +36,207 @@ var (
 	supportedVersionUpper = semver.MustParse("2.0.0")
 )
 
-type Borg struct {
-	config        *drone.Config
-	scheduledJobs map[string]cron.EntryID
+type Client struct {
+	configLock sync.RWMutex
+	config     config.Config
 }
 
-func New(config *drone.Config) (*Borg, error) {
-	b := &Borg{
-		config:        config,
-		scheduledJobs: make(map[string]cron.EntryID),
-	}
+func NewClient(config config.Config) (*Client, error) {
+	b := &Client{config: config}
 
-	version, err := b.runVersionLocal()
+	version, err := b.Version()
 	if err != nil {
 		return nil, fmt.Errorf("failed to check borg version: %v", err)
 	}
 
 	if version.LessThan(supportedVersionMin) || version.GreaterThanEqual(supportedVersionUpper) {
-		return nil, fmt.Errorf("unsupported borg version (must be >= %v and < %v): %v", supportedVersionMin, supportedVersionUpper, version)
+		return nil, fmt.Errorf(
+			"unsupported borg version (must be >= %v and < %v): %v",
+			supportedVersionMin,
+			supportedVersionUpper,
+			version,
+		)
 	}
 
-	log.Info().Msgf("Borg version: %v", version)
+	log.Info().Msgf("borg version: %v", version)
 
 	return b, nil
 }
 
-func (b *Borg) Compact() Action {
-	return &closureAction{
-		id: fmt.Sprintf("compact-%s", rand.Text()),
-		action: func(Action) error {
-			return b.runCompact()
-		},
-	}
+func (b *Client) SetConfig(config config.Config) {
+	b.configLock.Lock()
+	defer b.configLock.Unlock()
+
+	b.config = config
 }
 
-func (b *Borg) ScheduleBackups(backups []drone.BackupConfig, scheduler *cron.Cron) error {
-	for _, backup := range backups {
-		existing, ok := b.scheduledJobs[backup.Name]
-		if ok {
-			scheduler.Remove(existing)
-			delete(b.scheduledJobs, backup.Name)
-		}
+func (b *Client) Version() (*semver.Version, error) {
+	log.Debug().Msg("determining borg version")
 
-		backupAction, err := b.buildBackupAction(backup)
-		if err != nil {
-			return err
-		}
-
-		action := NewComposedAction(backupAction)
-		if len(backup.PreCommand) > 0 {
-			action.Pre(NewExecAction(backup.PreCommand))
-		}
-
-		if len(backup.PostCommand) > 0 {
-			action.Post(NewExecAction(backup.PostCommand))
-		}
-
-		if len(backup.FinallyCommand) > 0 {
-			action.Finally(NewExecAction(backup.FinallyCommand))
-		}
-
-		action.SetId(backup.Name)
-
-		entryId := scheduler.Schedule(backup.ScheduleParsed(), Wrap(action))
-		b.scheduledJobs[backup.Name] = entryId
-	}
-
-	return nil
-}
-
-func (b *Borg) buildBackupAction(backup drone.BackupConfig) (Action, error) {
-	if backup.Exec == nil && backup.Paths == nil {
-		return nil, fmt.Errorf("backup specifies neither exec nor paths: %s", backup.Name)
-	}
-
-	var delegate Action
-	var err error
-
-	if backup.Exec != nil {
-		delegate, err = b.buildExecAction(backup.Name, *backup.Exec)
-	} else {
-		delegate, err = b.BuildArchivePathsAction(backup.Name, backup.Paths.Paths)
-	}
+	cmd := exec.Command("borg", "--version")
+	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get borg version: %w", err)
 	}
 
-	result := NewComposedAction(delegate)
-	if backup.PreCommand != nil && len(backup.PreCommand) > 0 {
-		result.Pre(NewExecAction(backup.PreCommand))
+	split := strings.Split(strings.TrimSpace(string(output)), " ")
+	if len(split) != 2 {
+		return nil, fmt.Errorf("failed to parse borg version: %s", output)
 	}
 
-	if backup.PostCommand != nil && len(backup.PostCommand) > 0 {
-		result.Post(NewExecAction(backup.PostCommand))
-	}
-
-	if backup.FinallyCommand != nil && len(backup.FinallyCommand) > 0 {
-		result.Finally(NewExecAction(backup.FinallyCommand))
-	}
-
-	return result, nil
+	return semver.NewVersion(split[1])
 }
 
-func (b *Borg) buildExecAction(baseName string, backup drone.ExecBackupConfig) (Action, error) {
-	if backup.Command == nil || len(backup.Command) == 0 {
-		return nil, errors.New("exec backup has no command")
+func (b *Client) Info() (api.InfoListOutput, error) {
+	args := []string{"info", "--json"}
+
+	b.configLock.RLock()
+	args = b.setRsh(args)
+	args = append(args, b.config.Repo.Location)
+
+	env := b.env()
+	b.configLock.RUnlock()
+
+	var info api.InfoListOutput
+	returnCode, logMessages, err := api.Run(nil, args, env, nil, &info)
+	if err != nil {
+		return api.InfoListOutput{}, fmt.Errorf("failed to run borg info: %w", err)
 	}
 
-	actualStdout := false
-	if backup.Stdout != nil {
-		actualStdout = *backup.Stdout
-	}
+	return info, api.HandleBorgReturnCode(returnCode, logMessages)
+}
 
-	if actualStdout {
-		return b.BuildArchiveStdoutAction(
-			baseName,
-			func(ctx context.Context) (io.Reader, error, chan error) {
-				cmd := exec.CommandContext(ctx, backup.Command[0], backup.Command[1:]...)
-				stdout, err := cmd.StdoutPipe()
-				if err != nil {
-					return nil, err, nil
-				}
+func (b *Client) Init() error {
+	args := []string{"init", "--make-parent-dirs"}
 
-				errChan := make(chan error, 1)
-
-				go func() {
-					err = cmd.Wait()
-					if err != nil {
-						errChan <- err
-					}
-				}()
-
-				return stdout, nil, errChan
-			},
-		)
+	b.configLock.RLock()
+	if b.config.Encryption != nil {
+		args = append(args, "--encryption=keyfile")
 	} else {
-		if backup.Paths == nil || len(backup.Paths) == 0 {
-			return nil, errors.New("exec backup defines no paths")
+		args = append(args, "--encryption=none")
+	}
+
+	args = b.setRsh(args)
+	args = append(args, b.config.Repo.Location)
+
+	env := b.env()
+	b.configLock.RUnlock()
+
+	log.Info().Msgf("initializing repository: %v", b.config.Repo.Location)
+
+	returnCode, logMessages, err := api.Run(nil, args, env, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to run borg init: %w", err)
+	}
+
+	return api.HandleBorgReturnCode(returnCode, logMessages)
+}
+
+func (b *Client) CreateWithPaths(archiveName string, paths []string) (api.CreateOutput, error) {
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			return api.CreateOutput{}, fmt.Errorf("path %s is not an absolute path", path)
+		}
+	}
+
+	args := []string{"create", "--json", "--compression", "zlib,6"}
+
+	b.configLock.RLock()
+	args = b.setRsh(args)
+	args = append(args, fmt.Sprintf("%s::%s", b.config.Repo.Location, archiveName))
+	args = append(args, paths...)
+
+	env := b.env()
+	b.configLock.RUnlock()
+
+	log.Info().Strs("paths", paths).Msgf("creating archive: %v", archiveName)
+
+	var stats api.CreateOutput
+	returnCode, logMessages, err := api.Run(nil, args, env, nil, &stats)
+	if err != nil {
+		return api.CreateOutput{}, fmt.Errorf("failed to run borg create with paths: %w", err)
+	}
+
+	return stats, api.HandleBorgReturnCode(returnCode, logMessages)
+}
+
+func (b *Client) CreateWithInput(ctx context.Context, archiveName string, input io.Reader) (api.CreateOutput, error) {
+	if input == nil {
+		panic("input cannot be nil")
+	}
+
+	args := []string{"create", "--json", "--compression", "zlib,6"}
+
+	b.configLock.RLock()
+	args = b.setRsh(args)
+	args = append(args, fmt.Sprintf("%s::%s", b.config.Repo.Location, archiveName))
+	args = append(args, "-")
+
+	env := b.env()
+	b.configLock.RUnlock()
+
+	log.Info().Ctx(ctx).Msgf("creating archive from input: %v", archiveName)
+
+	var stats api.CreateOutput
+	returnCode, logMessages, err := api.Run(ctx, args, env, input, &stats)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return api.CreateOutput{}, err
 		}
 
-		result := NewSequenceAction()
-		result.Push(NewExecAction(backup.Command))
+		return api.CreateOutput{}, fmt.Errorf("failed to run borg create with stdin: %w", err)
+	}
 
-		backupAction, err := b.BuildArchivePathsAction(baseName, backup.Paths)
-		if err != nil {
-			return nil, err
-		}
+	return stats, api.HandleBorgReturnCode(returnCode, logMessages)
+}
 
-		result.Push(backupAction)
+func (b *Client) Compact() error {
+	args := []string{"compact"}
 
-		return result, nil
+	b.configLock.RLock()
+	args = b.setRsh(args)
+	args = append(args, b.config.Repo.Location)
+
+	env := b.env()
+	b.configLock.RUnlock()
+
+	log.Info().Msgf("compacting repository: %v", b.config.Repo.Location)
+
+	returnCode, logMessages, err := api.Run(nil, args, env, nil, nil)
+	if err != nil {
+		return fmt.Errorf("failed to run borg compact: %w", err)
+	}
+
+	return api.HandleBorgReturnCode(returnCode, logMessages)
+}
+
+func defaultEnv() map[string]string {
+	return map[string]string{
+		"LANG":            "en_US.UTF-8",
+		"LC_CTYPE":        "en_US.UTF-8",
+		"BORG_EXIT_CODES": "modern",
 	}
 }
 
-func (b *Borg) BuildArchiveStdoutAction(baseName string, stdout func(context.Context) (io.Reader, error, chan error)) (Action, error) {
-	return &closureAction{
-		id: rand.Text(),
-		action: func(self Action) error {
-			ctx, cancelContext := context.WithCancel(context.Background())
-			defer cancelContext()
-
-			input, err, errChan := stdout(ctx)
-			if err != nil {
-				return err
-			}
-
-			done := make(chan error, 1)
-
-			go func() {
-				stats, err := b.runCreateWithInput(ctx, CreateArchiveName(baseName), input)
-				if err != nil {
-					if errors.Is(err, context.Canceled) {
-						return
-					}
-				} else {
-					infoJson, _ := json.Marshal(stats)
-
-					log.Info().
-						Str("actionId", self.Id()).
-						RawJSON("info", infoJson).
-						Msg("borg execution succeeded")
-				}
-
-				done <- err
-			}()
-
-			select {
-			case err = <-errChan:
-				cancelContext()
-				return fmt.Errorf("process creating backup data failed: %w", err)
-			case err = <-done:
-				return err
-			}
-		},
-	}, nil
-}
-
-func (b *Borg) BuildArchivePathsAction(baseName string, sourcePaths []string) (Action, error) {
-	if len(sourcePaths) == 0 {
-		return nil, fmt.Errorf("no paths specified for backup %s", baseName)
+func (b *Client) env() map[string]string {
+	env := defaultEnv()
+	if b.config.Encryption != nil {
+		if b.config.Encryption.SecretId != nil {
+			env["BORG_PASSCOMMAND"] = "cred item read " + *b.config.Encryption.SecretId
+		} else {
+			env["BORG_PASSPHRASE"] = *b.config.Encryption.Secret
+		}
 	}
 
-	return &closureAction{
-		id: rand.Text(),
-		action: func(self Action) error {
-			stats, err := b.runCreateWithPaths(CreateArchiveName(baseName), sourcePaths)
-			if err != nil {
-				return err
-			}
-
-			infoJson, _ := json.Marshal(stats)
-
-			log.Info().
-				Str("actionId", self.Id()).
-				RawJSON("info", infoJson).
-				Msg("borg execution succeeded")
-
-			return nil
-		},
-	}, nil
+	return env
 }
 
-var normalizationRegexp = regexp.MustCompile("[^_a-zA-Z0-9]+")
+func (b *Client) setRsh(args []string) []string {
+	if b.config.Repo.IdentityFile != nil {
+		log.Debug().Msgf("using identity file %s", *b.config.Repo.IdentityFile)
+		args = append(args, "--rsh", "ssh -i "+*b.config.Repo.IdentityFile)
+	}
 
-func CreateArchiveName(baseName string) string {
-	normalizedName := normalizationRegexp.ReplaceAllString(baseName, "_")
-	return fmt.Sprintf("%s-%s", normalizedName, time.Now().Format("20060102150405"))
+	return args
 }

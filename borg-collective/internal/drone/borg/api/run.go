@@ -18,17 +18,24 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
-	"errors"
-	"github.com/rs/zerolog/log"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
+
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog/log"
 )
 
 func Run(ctx context.Context, command []string, env map[string]string, input io.Reader, result any) (returnCode ReturnCode, logMessages []LogMessage, err error) {
+	logTag := rand.Text()
+
 	finalCommand := []string{"--log-json"}
 	finalCommand = append(finalCommand, command...)
+
+	log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("command: borg %v", finalCommand)
 
 	var cmd *exec.Cmd
 	if ctx != nil {
@@ -38,6 +45,7 @@ func Run(ctx context.Context, command []string, env map[string]string, input io.
 	}
 
 	if input != nil {
+		log.Debug().Str("tag", logTag).Msg("providing data to stdin")
 		cmd.Stdin = input
 	}
 
@@ -46,9 +54,15 @@ func Run(ctx context.Context, command []string, env map[string]string, input io.
 		split := strings.SplitN(keyVal, "=", 2)
 		key := split[0]
 
-		newValue, ok := env[key]
-		if !ok {
+		newValue, found := env[key]
+		if !found {
 			continue
+		}
+
+		if strings.Contains(strings.ToLower(key), "_pass") {
+			log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("env: %s = ******", key)
+		} else {
+			log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("env: %s = %s", key, newValue)
 		}
 
 		finalEnv[i] = key + "=" + newValue
@@ -56,6 +70,12 @@ func Run(ctx context.Context, command []string, env map[string]string, input io.
 	}
 
 	for k, v := range env {
+		if strings.Contains(strings.ToLower(k), "_pass") {
+			log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("env: %s = ******", k)
+		} else {
+			log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("env: %s = %s", k, v)
+		}
+
 		finalEnv = append(finalEnv, k+"="+v)
 	}
 
@@ -68,12 +88,16 @@ func Run(ctx context.Context, command []string, env map[string]string, input io.
 	if result != nil {
 		stdout, err = cmd.Output()
 	} else {
+		log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("ignoring stdout")
 		err = cmd.Run()
 	}
 
 	if ctx != nil && errors.Is(ctx.Err(), context.Canceled) {
+		log.Debug().Ctx(ctx).Str("tag", logTag).Msg("context canceled")
 		return -1, nil, ctx.Err()
 	}
+
+	log.Debug().Ctx(ctx).Str("tag", logTag).Err(err).Msgf("command exited with code %d", cmd.ProcessState.ExitCode())
 
 	if err != nil {
 		var exiterr *exec.ExitError
@@ -90,6 +114,7 @@ func Run(ctx context.Context, command []string, env map[string]string, input io.
 	}
 
 	if result != nil {
+		log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("reading stdout as %T", result)
 		err = json.Unmarshal(stdout, result)
 		if err != nil {
 			return -1, nil, err
@@ -165,6 +190,7 @@ func HandleBorgLogMessages(logMessages []LogMessage) {
 }
 
 func HandleBorgReturnCode(returnCode ReturnCode, logMessages []LogMessage) error {
+	err := NewError(returnCode)
 	switch returnCode {
 	case ReturnCodeSuccess:
 		return nil
@@ -173,19 +199,19 @@ func HandleBorgReturnCode(returnCode ReturnCode, logMessages []LogMessage) error
 		return nil
 	case ReturnCodeError:
 		HandleBorgLogMessages(logMessages)
-		return errors.New("borg command failed, check log")
+		return errors.Wrap(err, "borg command failed, check log")
 	case ReturnCodeRepositoryDoesNotExist:
-		return errors.New("configured repository does not exist")
+		return errors.Wrap(err, "configured repository does not exist")
 	case ReturnCodeRepositoryIsInvalid:
-		return errors.New("configured location doesn't point to a valid repository")
+		return errors.Wrap(err, "configured location doesn't point to a valid repository")
 	case ReturnCodePasscommandFailure:
 		HandleBorgLogMessages(logMessages)
-		return errors.New("borg passcommand failed, check log")
+		return errors.Wrap(err, "borg passcommand failed, check log")
 	case ReturnCodePassphraseWrong:
-		return errors.New("configured passphrase is wrong")
+		return errors.Wrap(err, "configured passphrase is wrong")
 	case ReturnCodeConnectionClosed:
 		HandleBorgLogMessages(logMessages)
-		return errors.New("borg connection closed, check log")
+		return errors.Wrap(err, "borg connection closed, check log")
 	case ReturnCodeConnectionClosedWithHint:
 		var lm *LogMessageLogMessage
 		for _, logMessage := range logMessages {
@@ -197,13 +223,13 @@ func HandleBorgReturnCode(returnCode ReturnCode, logMessages []LogMessage) error
 		}
 
 		if lm != nil {
-			return errors.New(*lm.Msg())
+			return errors.Wrap(err, *lm.Msg())
 		} else {
 			HandleBorgLogMessages(logMessages)
-			return errors.New("borg connection closed, check log")
+			return errors.Wrap(err, "borg connection closed, check log")
 		}
 	}
 
 	HandleBorgLogMessages(logMessages)
-	return errors.New("unknown returncode")
+	return fmt.Errorf("unknown returncode: %d", returnCode)
 }
