@@ -62,26 +62,27 @@ func Exec(ctx context.Context, command []string) error {
 }
 
 type execOutputWrapper struct {
-	delegate io.ReadCloser
-	err      error
+	delegate    io.ReadCloser
+	err         chan error
+	gotErrValue bool
+	returnedErr error
 }
 
 func (e *execOutputWrapper) Read(p []byte) (n int, err error) {
-	if e.err != nil {
-		return 0, e.err
-	}
-
-	res, readErr := e.delegate.Read(p)
-	if readErr != nil {
-		return 0, readErr
-	} else if e.err != nil {
-		return 0, e.err
-	}
-
-	return res, nil
+	return e.delegate.Read(p)
 }
 
-func ExecWithOutput(ctx context.Context, command []string) (io.Reader, error) {
+func (e *execOutputWrapper) Error() error {
+	if !e.gotErrValue {
+		retErr := <-e.err
+		e.returnedErr = retErr
+		e.gotErrValue = true
+	}
+
+	return e.returnedErr
+}
+
+func ExecWithOutput(ctx context.Context, command []string) (ErrorReader, error) {
 	log.Info().
 		Ctx(ctx).
 		Strs("command", command).
@@ -103,12 +104,13 @@ func ExecWithOutput(ctx context.Context, command []string) (io.Reader, error) {
 
 	wrapper := execOutputWrapper{
 		delegate: output,
+		err:      make(chan error),
 	}
 
 	go func() {
 		err = cmd.Wait()
 		if err != nil {
-			wrapper.err = errors.Wrap(err, "command execution failed")
+			wrapper.err <- errors.Wrap(err, "command execution failed")
 
 			exitEvent := log.Warn().
 				Ctx(ctx).
@@ -127,6 +129,8 @@ func ExecWithOutput(ctx context.Context, command []string) (io.Reader, error) {
 			} else {
 				exitEvent.Msg("error executing command")
 			}
+		} else {
+			wrapper.err <- nil
 		}
 	}()
 

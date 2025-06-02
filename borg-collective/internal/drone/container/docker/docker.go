@@ -19,7 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/vemilyus/borg-collective/internal/utils"
 	"maps"
 	"slices"
 	"strings"
@@ -106,30 +106,6 @@ func (c *Client) EnsureContainerStopped(ctx context.Context, containerID string)
 	return nil
 }
 
-type execAttachWrapper struct {
-	response types.HijackedResponse
-	err      error
-}
-
-func (e *execAttachWrapper) Close() error {
-	return e.response.Conn.Close()
-}
-
-func (e *execAttachWrapper) Read(p []byte) (int, error) {
-	if e.err != nil {
-		return 0, e.err
-	}
-
-	res, readErr := e.response.Reader.Read(p)
-	if readErr != nil {
-		return 0, readErr
-	} else if e.err != nil {
-		return 0, e.err
-	}
-
-	return res, nil
-}
-
 func (c *Client) Exec(ctx context.Context, containerID string, cmd []string) error {
 	log.Info().
 		Ctx(ctx).
@@ -156,7 +132,32 @@ func (c *Client) Exec(ctx context.Context, containerID string, cmd []string) err
 	return c.waitForExec(ctx, exec.ID)
 }
 
-func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []string) (io.ReadCloser, error) {
+type execAttachWrapper struct {
+	response    types.HijackedResponse
+	err         chan error
+	gotErrValue bool
+	returnedErr error
+}
+
+func (e *execAttachWrapper) Close() error {
+	return e.response.Conn.Close()
+}
+
+func (e *execAttachWrapper) Read(p []byte) (n int, err error) {
+	return e.response.Conn.Read(p)
+}
+
+func (e *execAttachWrapper) Error() error {
+	if !e.gotErrValue {
+		retErr := <-e.err
+		e.returnedErr = retErr
+		e.gotErrValue = true
+	}
+
+	return e.returnedErr
+}
+
+func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []string) (utils.ErrorReadCloser, error) {
 	log.Info().
 		Ctx(ctx).
 		Str("engine", (string)(model.ContainerEngineDocker)).
@@ -191,9 +192,7 @@ func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []s
 
 	go func() {
 		err = c.waitForExec(ctx, exec.ID)
-		if err != nil {
-			wrapper.err = err
-		}
+		wrapper.err <- err
 	}()
 
 	return wrapper, nil

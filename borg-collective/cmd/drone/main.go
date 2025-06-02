@@ -92,23 +92,21 @@ func main() {
 		}
 	}
 
+	initializeRepository := false
 	info, err := borgClient.Info()
-	var borgError api.Error
+
 	if err != nil {
+		var borgError api.Error
 		if !errors.As(err, &borgError) || !borgError.IsRecoverable() {
 			log.Fatal().Err(err).Msg("failed to retrieve borg repository info")
+		} else {
+			initializeRepository = true
 		}
-	}
-
-	initializeRepository := false
-	if info.Repository.Id != "" {
+	} else {
 		infoJson, _ := json.Marshal(info)
 		log.Info().
 			RawJSON("info", infoJson).
 			Msg("retrieved borg repository info")
-	} else if err != nil && borgError.ReturnCode() == api.ReturnCodeRepositoryDoesNotExist {
-		initializeRepository = true
-		log.Info().Msg("borg repository does not exist")
 	}
 
 	if !config.DryRun {

@@ -18,9 +18,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"os"
+
 	"github.com/pelletier/go-toml/v2"
 	"github.com/robfig/cron/v3"
-	"os"
 )
 
 var (

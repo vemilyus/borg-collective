@@ -15,28 +15,19 @@
 
 package utils
 
-import "regexp"
-import "strings"
+import (
+	"testing"
 
-var matcher = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|(\S+)`)
+	"github.com/stretchr/testify/assert"
+)
 
-func SplitCommandLine(input string) []string {
-	var result []string
-	for _, match := range matcher.FindAllStringSubmatch(input, -1) {
-		if match[1] != "" {
-			result = append(result, unescape(match[1]))
-		} else if match[2] != "" {
-			result = append(result, unescape(match[2]))
-		} else if match[3] != "" {
-			result = append(result, match[3])
-		}
-	}
+func Test_SplitCommandLine(t *testing.T) {
+	simpleCommand := "borg init"
+	assert.Equal(t, []string{"borg", "init"}, SplitCommandLine(simpleCommand))
 
-	return result
-}
+	complexCommand := `echo "this is a \"value\"" my dudes`
+	assert.Equal(t, []string{"echo", `this is a "value"`, "my", "dudes"}, SplitCommandLine(complexCommand))
 
-func unescape(s string) string {
-	s = strings.ReplaceAll(s, "\\\"", "\"")
-	s = strings.ReplaceAll(s, "\\'", "'")
-	return s
+	anotherComplexOne := `echo 'this is a \'value\'' my brother`
+	assert.Equal(t, []string{"echo", "this is a 'value'", "my", "brother"}, SplitCommandLine(anotherComplexOne))
 }

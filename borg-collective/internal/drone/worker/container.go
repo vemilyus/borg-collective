@@ -124,6 +124,7 @@ func (d *containerProjectBackupJob) Run() {
 			err := d.engine.EnsureContainerRunning(d.ctx, ctnr.ID)
 			if err != nil {
 				log.Warn().
+					Ctx(d.ctx).
 					Err(err).
 					Fields(d.logFields(ctnr)).
 					Msg("failed to ensure container running after backup")
@@ -143,6 +144,7 @@ func (d *containerProjectBackupJob) runOnlineBackup(backupCtnr model.ContainerBa
 	err := d.engine.EnsureContainerRunning(d.ctx, backupCtnr.ID)
 	if err != nil {
 		log.Warn().
+			Ctx(d.ctx).
 			Err(err).
 			Fields(d.logFields(backupCtnr)).
 			Msg("failed to ensure container running for online backup")
@@ -166,6 +168,7 @@ func (d *containerProjectBackupJob) runDependentOfflineBackup(backupCtnr model.C
 	err := d.engine.EnsureContainerRunning(d.ctx, backupCtnr.ID)
 	if err != nil {
 		log.Warn().
+			Ctx(d.ctx).
 			Err(err).
 			Fields(d.logFields(backupCtnr)).
 			Msg("failed to ensure container running for online backup (dependents offline)")
@@ -186,6 +189,7 @@ func (d *containerProjectBackupJob) runDependentOfflineBackup(backupCtnr model.C
 		err = eg.Wait()
 		if err != nil {
 			log.Warn().
+				Ctx(d.ctx).
 				Err(err).
 				Fields(d.logFields(backupCtnr)).
 				Msg("failed to ensure dependent containers stopped")
@@ -210,6 +214,7 @@ func (d *containerProjectBackupJob) runOfflineBackup(backupCtnr model.ContainerB
 	err := d.engine.EnsureContainerStopped(d.ctx, backupCtnr.ID)
 	if err != nil {
 		log.Warn().
+			Ctx(d.ctx).
 			Err(err).
 			Fields(d.logFields(backupCtnr)).
 			Msg("failed to ensure container stopped for offline backup")
@@ -232,6 +237,7 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 		output, err := d.engine.ExecWithOutput(d.ctx, backupCtnr.ID, backupCtnr.Exec.Command)
 		if err != nil {
 			log.Warn().
+				Ctx(d.ctx).
 				Err(err).
 				Fields(d.logFields(backupCtnr)).
 				Msg("failed to execute exec command")
@@ -242,6 +248,7 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 		result, err := d.borgClient.CreateWithInput(d.ctx, utils.ArchiveName(backupName), output)
 		if err != nil {
 			log.Warn().
+				Ctx(d.ctx).
 				Err(err).
 				Fields(d.logFields(backupCtnr)).
 				Msg("backup failed")
@@ -249,11 +256,20 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 			return
 		}
 
+		if output.Error() != nil {
+			log.Warn().
+				Ctx(d.ctx).
+				Err(output.Error()).
+				Fields(d.logFields(backupCtnr)).
+				Msg("exec command failed, backup may be incomplete")
+		}
+
 		logBackupComplete(d.ctx, backupName, result)
 	} else {
 		err := d.engine.Exec(d.ctx, backupCtnr.ID, backupCtnr.Exec.Command)
 		if err != nil {
 			log.Warn().
+				Ctx(d.ctx).
 				Err(err).
 				Fields(d.logFields(backupCtnr)).
 				Msg("failed to execute exec command")
@@ -280,6 +296,7 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 		result, err := d.borgClient.CreateWithPaths(utils.ArchiveName(backupName), paths)
 		if err != nil {
 			log.Warn().
+				Ctx(d.ctx).
 				Err(err).
 				Fields(d.logFields(backupCtnr)).
 				Msg("backup failed")
@@ -298,6 +315,7 @@ func (d *containerProjectBackupJob) runVolumeBackup(backupCtnr model.ContainerBa
 	result, err := d.borgClient.CreateWithPaths(utils.ArchiveName(backupName), paths)
 	if err != nil {
 		log.Warn().
+			Ctx(d.ctx).
 			Err(err).
 			Fields(d.logFields(backupCtnr)).
 			Msg("backup failed")

@@ -98,6 +98,13 @@ func (s staticBackupJob) runExecBackup() error {
 			return err
 		}
 
+		if output.Error() != nil {
+			log.Warn().
+				Ctx(s.ctx).
+				Err(output.Error()).
+				Msg("exec command failed, backup may be incomplete")
+		}
+
 		logBackupComplete(s.ctx, s.backup.Name, result)
 	} else {
 		if len(s.backup.Exec.Paths) == 0 {
