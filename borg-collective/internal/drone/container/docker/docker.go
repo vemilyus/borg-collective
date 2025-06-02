@@ -18,12 +18,13 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/vemilyus/borg-collective/internal/utils"
 	"maps"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -31,6 +32,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/rs/zerolog/log"
 	"github.com/vemilyus/borg-collective/internal/drone/container/model"
+	"github.com/vemilyus/borg-collective/internal/utils"
 )
 
 type Client struct {
@@ -67,6 +69,32 @@ func (c *Client) EnsureContainerRunning(ctx context.Context, containerID string)
 			err = c.dc.ContainerStart(ctx, containerID, container.StartOptions{})
 			if err != nil {
 				return err
+			}
+		}
+
+		if inspect.State.Health != nil {
+			timeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+
+			started := make(chan error)
+			go func() {
+				for {
+					inspect, err = c.dc.ContainerInspect(timeout, containerID)
+					if err != nil {
+						started <- err
+					}
+
+					if inspect.State.Health.Status == container.Unhealthy {
+						started <- errors.New("container is unhealthy: " + containerID)
+					}
+				}
+			}()
+
+			select {
+			case err = <-started:
+				return err
+			case <-timeout.Done():
+				return errors.New("timed out waiting for container to become healthy: " + containerID)
 			}
 		}
 	} else {
