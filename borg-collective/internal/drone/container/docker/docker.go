@@ -35,6 +35,8 @@ import (
 	"github.com/vemilyus/borg-collective/internal/utils"
 )
 
+const defaultTimeout = 30 * time.Second
+
 type Client struct {
 	dc         *client.Client
 	cacheMutex sync.Mutex
@@ -73,7 +75,7 @@ func (c *Client) EnsureContainerRunning(ctx context.Context, containerID string)
 		}
 
 		if inspect.State.Health != nil {
-			timeout, cancel := context.WithTimeout(ctx, 30*time.Second)
+			timeout, cancel := context.WithTimeout(ctx, defaultTimeout)
 			defer cancel()
 
 			started := make(chan error)
@@ -115,14 +117,15 @@ func (c *Client) EnsureContainerStopped(ctx context.Context, containerID string)
 		Msg("checking if container is stopped")
 
 	if inspect, err = c.dc.ContainerInspect(ctx, containerID); err == nil {
-		if !inspect.State.Dead {
+		if inspect.State.Status != container.StateExited {
 			log.Info().
 				Ctx(ctx).
 				Str("engine", (string)(model.ContainerEngineDocker)).
 				Str("container", containerID).
 				Msg("stopping container")
 
-			err = c.dc.ContainerStop(ctx, containerID, container.StopOptions{})
+			timeout := (int)(defaultTimeout / time.Second)
+			err = c.dc.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
 			if err != nil {
 				return err
 			}
