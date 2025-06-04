@@ -125,3 +125,16 @@ func TestBorgCreateWithInput(t *testing.T) {
 
 	assert.NotNil(t, result.Archive.Stats)
 }
+
+func TestBorgCompact(t *testing.T) {
+	cfg := config.Config{Repo: config.RepositoryConfig{Location: t.TempDir()}}
+	borgClient, err := NewClient(cfg)
+	assert.NoError(t, err)
+	assert.NotNil(t, borgClient)
+
+	err = borgClient.Init()
+	assert.NoError(t, err)
+
+	err = borgClient.Compact()
+	assert.NoError(t, err)
+}

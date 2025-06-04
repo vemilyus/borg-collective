@@ -6,6 +6,11 @@ clean:
 	rm -rf ./credentials/internal/proto/*.pb.go
 
 
+tidy:
+	cd ./borg-collective; go mod tidy; cd ..
+	cd ./credentials; go mod tidy; cd ..
+
+
 generate:
 	protoc --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
@@ -21,13 +26,13 @@ test-ci: generate
 		| go-ctrf-json-reporter -output ctrf-report.json
 
 
-build: clean generate
+build: clean tidy generate
 	go build -o="./bin/borgd" ./borg-collective/cmd/drone
 	go build -o="./bin/cred" ./credentials/cmd/cli
 	go build -o="./bin/credstore" ./credentials/cmd/store
 
 
-build-ci: generate
+build-ci: tidy generate
 	go build -o="./bin/borgd-$(SUFFIX)" -ldflags="-s -w -X main.version=$(VERSION)" ./borg-collective/cmd/drone
 	go build -o="./bin/cred-$(SUFFIX)" -ldflags="-s -w -X main.version=$(VERSION)" ./credentials/cmd/cli
 	go build -o="./bin/credstore-$(SUFFIX)" -ldflags="-s -w -X main.version=$(VERSION)" ./credentials/cmd/store

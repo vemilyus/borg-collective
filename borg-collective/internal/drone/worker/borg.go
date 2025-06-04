@@ -13,4 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package config
+package worker
+
+import (
+	"github.com/robfig/cron/v3"
+	"github.com/vemilyus/borg-collective/internal/drone/borg"
+)
+
+type compactionJob struct {
+	borgClient *borg.Client
+}
+
+func newRepoCompactionJob(borgClient *borg.Client) cron.Job {
+	return &compactionJob{borgClient}
+}
+
+func (c *compactionJob) Run() {
+	_ = c.borgClient.Compact()
+}

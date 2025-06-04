@@ -34,6 +34,7 @@ type Worker struct {
 	scheduler    *cron.Cron
 	ctx          context.Context
 	ctxCancel    context.CancelFunc
+	compactJobId cron.EntryID
 	staticJobIds []cron.EntryID
 	dockerJobIds map[string]cron.EntryID
 }
@@ -84,6 +85,8 @@ func (w *Worker) Run() error {
 		select {
 		case cfg := <-configWatch.Updates():
 			w.borgClient.SetConfig(cfg)
+			w.ScheduleRepoCompaction(cfg)
+
 			err = w.ScheduleStaticBackups(cfg.Backups)
 			if err != nil {
 				log.Warn().
@@ -120,7 +123,21 @@ func (w *Worker) RunOnce() error {
 		entry.WrappedJob.Run()
 	}
 
+	_ = w.borgClient.Compact()
+
 	return nil
+}
+
+func (w *Worker) ScheduleRepoCompaction(cfg config.Config) {
+	if w.compactJobId != 0 {
+		w.scheduler.Remove(w.compactJobId)
+		w.compactJobId = 0
+	}
+
+	compactionSchedule := cfg.Repo.CompactionSchedule()
+	if compactionSchedule != nil {
+		w.compactJobId = w.scheduler.Schedule(compactionSchedule, newRepoCompactionJob(w.borgClient))
+	}
 }
 
 func (w *Worker) ScheduleStaticBackups(backups []config.BackupConfig) error {
