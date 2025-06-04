@@ -35,7 +35,7 @@ func Run(ctx context.Context, command []string, env map[string]string, input io.
 	finalCommand := []string{"--log-json"}
 	finalCommand = append(finalCommand, command...)
 
-	log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("command: borg %v", finalCommand)
+	log.Debug().Ctx(ctx).Str("tag", logTag).Msgf("command: borg %s", strings.Join(finalCommand, " "))
 
 	var cmd *exec.Cmd
 	if ctx != nil {
@@ -153,22 +153,32 @@ func parseLogLines(stderr []byte) ([]LogMessage, error) {
 		}
 
 		var parsedLine LogMessage
+		var err error
 		if bytes.Index(line, searchArchiveProgress) > -1 {
-			parsedLine = LogMessageArchiveProgress{}
+			var ap LogMessageArchiveProgress
+			err = json.Unmarshal(line, &ap)
+			parsedLine = ap
 		} else if bytes.Index(line, searchLogMessage) > -1 {
-			parsedLine = LogMessageLogMessage{}
+			var lm LogMessageLogMessage
+			err = json.Unmarshal(line, &lm)
+			parsedLine = lm
 		} else if bytes.Index(line, searchFileStatus) > -1 {
-			parsedLine = LogMessageFileStatus{}
+			var fs LogMessageFileStatus
+			err = json.Unmarshal(line, &fs)
+			parsedLine = fs
 		} else if bytes.Index(line, searchProgressMessage) > -1 {
-			parsedLine = LogMessageProgressMessage{}
+			var pm LogMessageProgressMessage
+			err = json.Unmarshal(line, &pm)
+			parsedLine = pm
 		} else if bytes.Index(line, searchProgressPercent) > -1 {
-			parsedLine = LogMessageProgressPercent{}
+			var pm LogMessageProgressPercent
+			err = json.Unmarshal(line, &pm)
+			parsedLine = pm
 		} else {
 			log.Debug().Str("line", string(line)).Msg("Unknown log message type")
 			continue
 		}
 
-		err := json.Unmarshal(line, &parsedLine)
 		if err != nil {
 			log.Debug().Err(err).Str("line", string(line)).Msg("Failed to unmarshal log message line")
 			continue
@@ -200,6 +210,8 @@ func HandleBorgReturnCode(returnCode ReturnCode, logMessages []LogMessage) error
 	case ReturnCodeError:
 		HandleBorgLogMessages(logMessages)
 		return errors.Wrap(err, "borg command failed, check log")
+	case ReturnCodeRepositoryExists:
+		return errors.Wrap(err, "there already exists a repository")
 	case ReturnCodeRepositoryDoesNotExist:
 		return errors.Wrap(err, "configured repository does not exist")
 	case ReturnCodeRepositoryIsInvalid:

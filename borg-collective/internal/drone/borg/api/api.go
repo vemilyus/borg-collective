@@ -27,6 +27,7 @@ const (
 	ReturnCodeSuccess                  ReturnCode = 0
 	ReturnCodeWarning                  ReturnCode = 1
 	ReturnCodeError                    ReturnCode = 2
+	ReturnCodeRepositoryExists         ReturnCode = 10
 	ReturnCodeRepositoryDoesNotExist   ReturnCode = 13
 	ReturnCodeRepositoryIsInvalid      ReturnCode = 15
 	ReturnCodePasscommandFailure       ReturnCode = 51

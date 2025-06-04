@@ -53,8 +53,8 @@ func (rc RepositoryConfig) CompactionSchedule() cron.Schedule {
 }
 
 type EncryptionConfig struct {
-	Secret   *string
-	SecretId *string
+	Secret        *string
+	SecretCommand *string
 }
 
 type BackupConfig struct {
@@ -107,8 +107,8 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	if conf.Encryption != nil {
-		if conf.Encryption.Secret == nil && conf.Encryption.SecretId == nil {
-			return nil, errors.New("encryption config must specify either Secret or SecretId")
+		if conf.Encryption.Secret == nil && conf.Encryption.SecretCommand == nil {
+			return nil, errors.New("encryption config must specify either Secret or SecretCommand")
 		}
 	}
 

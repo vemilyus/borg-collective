@@ -105,6 +105,8 @@ func (w *Worker) Run() error {
 			}
 		case err = <-dockerWatch.Errors():
 			return err
+		case <-w.ctx.Done():
+			return nil
 		}
 	}
 }

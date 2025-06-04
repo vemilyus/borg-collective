@@ -58,7 +58,9 @@ func NewClient(config config.Config) (*Client, error) {
 		)
 	}
 
-	log.Info().Msgf("borg version: %v", version)
+	log.Info().
+		Str("version", version.String()).
+		Msgf("borg version: %v", version)
 
 	return b, nil
 }
@@ -196,12 +198,14 @@ func (b *Client) Compact() error {
 
 	b.configLock.RLock()
 	args = b.setRsh(args)
-	args = append(args, b.config.Repo.Location)
+
+	repoLocation := b.config.Repo.Location
+	args = append(args, repoLocation)
 
 	env := b.env()
 	b.configLock.RUnlock()
 
-	log.Info().Msgf("compacting repository: %v", b.config.Repo.Location)
+	log.Info().Msgf("compacting repository: %v", repoLocation)
 
 	returnCode, logMessages, err := api.Run(nil, args, env, nil, nil)
 	if err != nil {
@@ -222,8 +226,8 @@ func defaultEnv() map[string]string {
 func (b *Client) env() map[string]string {
 	env := defaultEnv()
 	if b.config.Encryption != nil {
-		if b.config.Encryption.SecretId != nil {
-			env["BORG_PASSCOMMAND"] = "cred item read " + *b.config.Encryption.SecretId
+		if b.config.Encryption.SecretCommand != nil {
+			env["BORG_PASSCOMMAND"] = *b.config.Encryption.SecretCommand
 		} else {
 			env["BORG_PASSPHRASE"] = *b.config.Encryption.Secret
 		}
