@@ -28,7 +28,7 @@ import (
 	"github.com/vemilyus/borg-collective/internal/utils"
 )
 
-func Test_NewClient(t *testing.T) {
+func TestBorgNewClient(t *testing.T) {
 	borgClient, err := NewClient(config.Config{})
 	assert.NoError(t, err)
 	assert.NotNil(t, borgClient)
@@ -40,7 +40,7 @@ func Test_NewClient(t *testing.T) {
 	assert.True(t, version.GreaterThanEqual(supportedVersionMin))
 }
 
-func Test_Info(t *testing.T) {
+func TestBorgInfo(t *testing.T) {
 	cfg := config.Config{Repo: config.RepositoryConfig{Location: "/tmp/" + rand.Text()}}
 	borgClient, err := NewClient(cfg)
 	assert.NoError(t, err)
@@ -70,7 +70,7 @@ func Test_Info(t *testing.T) {
 	assert.Equal(t, validDir, info.Repository.Location)
 }
 
-func Test_Init(t *testing.T) {
+func TestBorgInit(t *testing.T) {
 	cfg := config.Config{Repo: config.RepositoryConfig{Location: "/tmp/" + rand.Text() + "/" + rand.Text()}}
 	borgClient, err := NewClient(cfg)
 	assert.NoError(t, err)
@@ -85,7 +85,7 @@ func Test_Init(t *testing.T) {
 	_ = os.RemoveAll(cfg.Repo.Location)
 }
 
-func Test_CreateWithPaths(t *testing.T) {
+func TestBorgCreateWithPaths(t *testing.T) {
 	cfg := config.Config{Repo: config.RepositoryConfig{Location: t.TempDir()}}
 	borgClient, err := NewClient(cfg)
 	assert.NoError(t, err)
@@ -106,7 +106,7 @@ func Test_CreateWithPaths(t *testing.T) {
 	assert.NotNil(t, result.Archive.Stats)
 }
 
-func Test_CreateWithInput(t *testing.T) {
+func TestBorgCreateWithInput(t *testing.T) {
 	cfg := config.Config{Repo: config.RepositoryConfig{Location: t.TempDir()}}
 	borgClient, err := NewClient(cfg)
 	assert.NoError(t, err)
