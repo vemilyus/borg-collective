@@ -21,6 +21,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
@@ -63,6 +64,7 @@ func Exec(ctx context.Context, command []string) error {
 
 type execOutputWrapper struct {
 	delegate    io.ReadCloser
+	errMutex    sync.Mutex
 	err         chan error
 	gotErrValue bool
 	returnedErr error
@@ -74,9 +76,14 @@ func (e *execOutputWrapper) Read(p []byte) (n int, err error) {
 
 func (e *execOutputWrapper) Error() error {
 	if !e.gotErrValue {
-		retErr := <-e.err
-		e.returnedErr = retErr
-		e.gotErrValue = true
+		e.errMutex.Lock()
+		defer e.errMutex.Unlock()
+
+		if !e.gotErrValue {
+			retErr := <-e.err
+			e.returnedErr = retErr
+			e.gotErrValue = true
+		}
 	}
 
 	return e.returnedErr

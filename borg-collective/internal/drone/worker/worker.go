@@ -40,18 +40,23 @@ type Worker struct {
 }
 
 func NewWorker(
+	parentCtx context.Context,
 	configPath string,
 	borgClient *borg.Client,
 	dockerClient *docker.Client,
 	scheduler *cron.Cron,
 ) *Worker {
-	ctx, cancel := context.WithCancel(context.Background())
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
+	wCtx, cancel := context.WithCancel(parentCtx)
 	s := &Worker{
 		configPath:   configPath,
 		borgClient:   borgClient,
 		dockerClient: dockerClient,
 		scheduler:    scheduler,
-		ctx:          ctx,
+		ctx:          wCtx,
 		ctxCancel:    cancel,
 		staticJobIds: make([]cron.EntryID, 0),
 		dockerJobIds: make(map[string]cron.EntryID),
@@ -223,7 +228,7 @@ func (w *Worker) scheduleDockerBackup(cbp model.ContainerBackupProject) error {
 						Ctx(w.ctx).
 						Err(err).
 						Str("projectName", cbp.ProjectName).
-						Msg("restoring container backup project")
+						Msg("rescheduling container backup project")
 				}
 
 				jobId = w.scheduler.Schedule(prevEntry.Schedule, prevEntry.Job)

@@ -165,6 +165,7 @@ func (c *Client) Exec(ctx context.Context, containerID string, cmd []string) err
 
 type execAttachWrapper struct {
 	response    types.HijackedResponse
+	errMutex    sync.Mutex
 	err         chan error
 	gotErrValue bool
 	returnedErr error
@@ -180,9 +181,14 @@ func (e *execAttachWrapper) Read(p []byte) (n int, err error) {
 
 func (e *execAttachWrapper) Error() error {
 	if !e.gotErrValue {
-		retErr := <-e.err
-		e.returnedErr = retErr
-		e.gotErrValue = true
+		e.errMutex.Lock()
+		defer e.errMutex.Unlock()
+
+		if !e.gotErrValue {
+			retErr := <-e.err
+			e.returnedErr = retErr
+			e.gotErrValue = true
+		}
 	}
 
 	return e.returnedErr

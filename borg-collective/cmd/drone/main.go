@@ -43,6 +43,8 @@ func main() {
 	parseArgs()
 	logging.InitLogging()
 
+	ctx := context.Background()
+
 	if config.Verbose {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	} else {
@@ -74,7 +76,7 @@ func main() {
 		cron.WithChain(cron.SkipIfStillRunning(cronLogger), cron.Recover(cronLogger)),
 	)
 
-	wrk := worker.NewWorker(configPath, borgClient, dockerClient, scheduler)
+	wrk := worker.NewWorker(ctx, configPath, borgClient, dockerClient, scheduler)
 	wrk.ScheduleRepoCompaction(*initialConfig)
 
 	err = wrk.ScheduleStaticBackups(initialConfig.Backups)
@@ -83,7 +85,7 @@ func main() {
 	}
 
 	if dockerClient != nil {
-		dockerBackups, err := dockerClient.ReadProjects(context.Background())
+		dockerBackups, err := dockerClient.ReadProjects(ctx)
 		if err != nil {
 			log.Fatal().Err(err).Msg("failed to load docker container state")
 		}
