@@ -63,7 +63,7 @@ func NewWorker(
 func (w *Worker) Run() error {
 	defer w.ctxCancel()
 
-	configWatch, err := config.NewWatch(w.configPath)
+	configWatch, err := config.NewWatch(w.ctx, w.configPath)
 	if err != nil {
 		return err
 	}

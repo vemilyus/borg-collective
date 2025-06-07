@@ -69,7 +69,6 @@ func (c *Client) Watch(ctx context.Context) (*Watch, error) {
 			select {
 			case event, ok := <-dockerEvents:
 				if !ok {
-					watch.err <- errors.New("Docker events channel closed")
 					_ = watch.Close()
 					return
 				}
@@ -87,7 +86,6 @@ func (c *Client) Watch(ctx context.Context) (*Watch, error) {
 
 				watch.err <- eventsErr
 			case <-ctx.Done():
-				watch.err <- errors.New("watch ctx is done")
 				_ = watch.Close()
 				return
 			}

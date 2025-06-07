@@ -16,11 +16,15 @@
 package config
 
 import (
+	"context"
 	"fmt"
-	"github.com/fsnotify/fsnotify"
-	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
+	"github.com/rs/zerolog/log"
 )
 
 type Watch struct {
@@ -36,7 +40,7 @@ func (w *Watch) Errors() <-chan error {
 	return w.err
 }
 
-func NewWatch(path string) (*Watch, error) {
+func NewWatch(ctx context.Context, path string) (*Watch, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -48,36 +52,77 @@ func NewWatch(path string) (*Watch, error) {
 	}
 
 	go func() {
+		watchingParentDir := false
 		var lastOp fsnotify.Op
 
 		for {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
+					_ = watcher.Close()
 					return
 				}
 
+				if log.Trace().Enabled() {
+					log.Trace().
+						Str("path", event.Name).
+						Str("op", event.Op.String()).
+						Msg("received config watch event")
+				}
+
 				if event.Has(fsnotify.Remove) {
+					if watchingParentDir {
+						watch.err <- fmt.Errorf("config file parent directory was removed: %s", filepath.Dir(path))
+						return
+					}
+
 					log.Debug().Msg("config file was removed")
 					lastOp = fsnotify.Remove
 
-					// need to re-add watch due to removal
-					err = watcher.Add(path)
+					// need to add dir-watch due to removal
+					err = watcher.Add(filepath.Dir(event.Name))
 					if err != nil {
 						watch.err <- err
 						return
 					}
+
+					watchingParentDir = true
 
 					continue
 				}
 
 				lastOp = 0
 
-				if strings.Contains(event.Op.String(), "CLOSE_WRITE") {
-					log.Info().Msg("config file changed, reloading...")
+				if event.Has(fsnotify.Write) && event.Name == path {
+					if watchingParentDir {
+						err = watcher.Remove(filepath.Dir(event.Name))
+						if err != nil {
+							watch.err <- err
+							return
+						}
+						watchingParentDir = false
+
+						err = watcher.Add(path)
+						if err != nil {
+							watch.err <- err
+							return
+						}
+					}
+
+					log.Info().Msg("config file changed")
 					config, err := LoadConfig(path)
 					if err != nil {
-						log.Warn().Err(err).Str("path", path).Msg("failed to load config file")
+						var evt *zerolog.Event
+						if strings.HasPrefix(err.Error(), "toml:") {
+							evt = log.Debug()
+						} else {
+							evt = log.Warn()
+						}
+
+						if evt.Enabled() {
+							evt.Err(err).Str("path", path).Msg("failed to load config file")
+						}
+
 						continue
 					}
 
@@ -94,6 +139,9 @@ func NewWatch(path string) (*Watch, error) {
 					watch.err <- fmt.Errorf("timed out after last op %s", lastOp.String())
 					return
 				}
+			case <-ctx.Done():
+				_ = watcher.Close()
+				return
 			}
 		}
 	}()
