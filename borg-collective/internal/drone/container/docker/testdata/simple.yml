@@ -1,0 +1,18 @@
+services:
+  test-container:
+    image: alpine:latest
+    entrypoint:
+      - "ash"
+      - "-c"
+      - "trap 'echo \"Exiting...\"; exit' SIGINT SIGTERM; while true; do echo \"Running...\"; sleep 1; done"
+
+  test-container-with-health:
+    image: alpine:latest
+    entrypoint:
+      - "ash"
+      - "-c"
+      - "trap 'echo \"Exiting...\"; exit' SIGINT SIGTERM; while true; do echo \"Running...\"; sleep 1; done"
+    healthcheck:
+      start_interval: 3s
+      start_period: 1s
+      test: "exit 0"

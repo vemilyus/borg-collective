@@ -26,5 +26,5 @@ type Engine interface {
 	EnsureContainerStopped(ctx context.Context, containerID string) error
 
 	Exec(ctx context.Context, containerID string, cmd []string) error
-	ExecWithOutput(ctx context.Context, containerID string, cmd []string) (utils.ErrorReadCloser, error)
+	ExecWithOutput(ctx context.Context, containerID string, cmd []string) (utils.ErrorReader, error)
 }

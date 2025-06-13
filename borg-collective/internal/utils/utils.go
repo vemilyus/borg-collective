@@ -40,3 +40,30 @@ func unescape(s string) string {
 	s = strings.ReplaceAll(s, "\\'", "'")
 	return s
 }
+
+// ToMap yoink'd from gotest.tools/v3/env
+
+// ToMap takes a list of strings in the format returned by [os.Environ] and
+// returns a mapping of keys to values.
+func ToMap(env []string) map[string]string {
+	result := map[string]string{}
+	for _, raw := range env {
+		key, value := getParts(raw)
+		result[key] = value
+	}
+	return result
+}
+
+func getParts(raw string) (string, string) {
+	if raw == "" {
+		return "", ""
+	}
+	// Environment variables on windows can begin with =
+	// http://blogs.msdn.com/b/oldnewthing/archive/2010/05/06/10008132.aspx
+	parts := strings.SplitN(raw[1:], "=", 2)
+	key := raw[:1] + parts[0]
+	if len(parts) == 1 {
+		return key, ""
+	}
+	return key, parts[1]
+}

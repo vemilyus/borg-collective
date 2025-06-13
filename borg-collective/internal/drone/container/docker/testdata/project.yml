@@ -1,0 +1,105 @@
+services:
+  redis:
+    image: redis:7
+    restart: unless-stopped
+
+    volumes:
+      - redis-data:/data
+
+    labels:
+      - 'io.v47.borgd.enabled=true'
+      - 'io.v47.borgd.when=0 1 * * *'
+      - 'io.v47.borgd.project_name=test-paperless'
+      - 'io.v47.borgd.service_name=redis'
+      - 'io.v47.borgd.service.volumes.[0]=/data'
+      - 'io.v47.borgd.service.mode=offline'
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+
+    environment:
+      TZ: Europe/Vienna
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: paperless
+
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+
+    labels:
+      - 'io.v47.borgd.enabled=true'
+      - 'io.v47.borgd.when=0 1 * * *'
+      - 'io.v47.borgd.project_name=test-paperless'
+      - 'io.v47.borgd.service_name=db'
+      - 'io.v47.borgd.service.exec=pg_dumpall -U &{POSTGRES_USER} -c --if-exists'
+      - 'io.v47.borgd.service.stdout=true'
+      - 'io.v47.borgd.service.mode=dependent-offline'
+
+  gotenberg:
+    image: gotenberg/gotenberg:8.21.0
+    command: gotenberg --chromium-disable-javascript=true --chromium-allow-list=file:///tmp/.*
+    restart: unless-stopped
+
+    labels:
+      - 'io.v47.borgd.enabled=true'
+      - 'io.v47.borgd.when=0 1 * * *'
+      - 'io.v47.borgd.project_name=test-paperless'
+      - 'io.v47.borgd.service_name=gotenberg'
+
+  tika:
+    image: apache/tika:3.0.0.0-full
+    restart: unless-stopped
+
+    labels:
+      - 'io.v47.borgd.enabled=true'
+      - 'io.v47.borgd.when=0 1 * * *'
+      - 'io.v47.borgd.project_name=test-paperless'
+      - 'io.v47.borgd.service_name=tika'
+
+  server:
+    image: ghcr.io/paperless-ngx/paperless-ngx:2.16.3
+    restart: unless-stopped
+
+    environment:
+      USERMAP_UID: 0
+      USERMAP_GID: 0
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_TIKA_ENABLED: 1
+      PAPERLESS_TIKA_GOTENBERG_ENDPOINT: http://gotenberg:3000
+      PAPERLESS_TIKA_ENDPOINT: http://tika:9998
+      PAPERLESS_URL: https://paperless.example.com
+      PAPERLESS_TIME_ZONE: Europe/Vienna
+      PAPERLESS_OCR_LANGUAGE: deu
+      PAPERLESS_OCR_LANGUAGES: eng fra
+      PAPERLESS_SECRET_KEY: some random secret key
+
+    volumes:
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+
+    depends_on:
+      - redis
+      - db
+      - gotenberg
+      - tika
+
+    labels:
+      - 'io.v47.borgd.enabled=true'
+      - 'io.v47.borgd.when=0 1 * * *'
+      - 'io.v47.borgd.project_name=test-paperless'
+      - 'io.v47.borgd.service_name=server'
+      - 'io.v47.borgd.service.dependencies.[0]=redis'
+      - 'io.v47.borgd.service.dependencies.[1]=db'
+      - 'io.v47.borgd.service.dependencies.[2]=gotenberg'
+      - 'io.v47.borgd.service.dependencies.[3]=tika'
+      - 'io.v47.borgd.service.volumes.[0]=/usr/src/paperless/data'
+      - 'io.v47.borgd.service.volumes.[1]=/usr/src/paperless/media'
+      - 'io.v47.borgd.service.mode=offline'
+
+volumes:
+  redis-data:
+  pg-data:
+  paperless-data:
+  paperless-media:

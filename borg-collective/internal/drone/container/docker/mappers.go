@@ -18,6 +18,7 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -53,6 +54,8 @@ func mapInspectToProject(inspect container.InspectResponse) (*model.ContainerBac
 	}, nil
 }
 
+var ampEnvEscape = regexp.MustCompile(`&\{`)
+
 func mapInspectToContainerBackup(inspect container.InspectResponse) (*model.ContainerBackup, error) {
 	upperDir := ""
 	if inspect.GraphDriver.Name == "overlay2" {
@@ -69,13 +72,13 @@ func mapInspectToContainerBackup(inspect container.InspectResponse) (*model.Cont
 		ID:            inspect.ID,
 		Mode:          model.BackupModeDefault,
 		UpperDirPath:  upperDir,
-		BackupVolumes: make([]model.Volume, 3),
+		BackupVolumes: make([]model.Volume, 0, 3),
 		AllVolumes:    mapVolumes(inspect.Mounts, inspect.ID),
-		Dependencies:  make([]string, 3),
+		Dependencies:  make([]string, 0, 3),
 	}
 
 	exec := model.ContainerExecBackup{
-		Paths: make([]string, 1),
+		Paths: make([]string, 0, 1),
 	}
 
 	for key, value := range inspect.Config.Labels {
@@ -94,6 +97,7 @@ func mapInspectToContainerBackup(inspect container.InspectResponse) (*model.Cont
 		} else if strings.HasPrefix(key, model.LabelDependenciesPfx) {
 			result.Dependencies = append(result.Dependencies, value)
 		} else if key == model.LabelExec {
+			value = ampEnvEscape.ReplaceAllString(value, "${")
 			exec.Command = utils.SplitCommandLine(value)
 		} else if key == model.LabelExecStdout {
 			exec.Stdout = true
@@ -180,7 +184,7 @@ func mapVolumes(mounts []container.MountPoint, containerID string) []model.Volum
 }
 
 func mapVolume(m container.MountPoint) (model.Volume, error) {
-	if m.Type != mount.TypeBind {
+	if m.Type != mount.TypeBind && m.Type != mount.TypeVolume {
 		return model.Volume{}, fmt.Errorf("volume mount type not supported: %s", m.Type)
 	}
 

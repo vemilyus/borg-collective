@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_Exec(t *testing.T) {
+func TestUtilsExec(t *testing.T) {
 	err := Exec(context.Background(), []string{"bash", "-c", "echo \"hello world\""})
 	assert.NoError(t, err)
 
@@ -39,7 +39,7 @@ func Test_Exec(t *testing.T) {
 	assert.Equal(t, 2, exitErr.ExitCode())
 }
 
-func Test_ExecWithOutput(t *testing.T) {
+func TestUtilsExecWithOutput(t *testing.T) {
 	output, err := ExecWithOutput(context.Background(), []string{"bash", "-c", "echo \"hello world\""})
 	assert.NoError(t, err)
 

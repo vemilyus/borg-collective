@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_SplitCommandLine(t *testing.T) {
+func TestUtilsSplitCommandLine(t *testing.T) {
 	simpleCommand := "borg init"
 	assert.Equal(t, []string{"borg", "init"}, SplitCommandLine(simpleCommand))
 
@@ -30,4 +30,7 @@ func Test_SplitCommandLine(t *testing.T) {
 
 	anotherComplexOne := `echo 'this is a \'value\'' my brother`
 	assert.Equal(t, []string{"echo", "this is a 'value'", "my", "brother"}, SplitCommandLine(anotherComplexOne))
+
+	complexIncludingEnvVar := `echo "this is ${ENV_VAR} value"`
+	assert.Equal(t, []string{"echo", "this is ${ENV_VAR} value"}, SplitCommandLine(complexIncludingEnvVar))
 }

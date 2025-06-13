@@ -20,7 +20,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
+	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -30,11 +33,13 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/rs/zerolog/log"
 	"github.com/vemilyus/borg-collective/internal/drone/container/model"
 	"github.com/vemilyus/borg-collective/internal/utils"
 )
 
+const loopBackoff = 100 * time.Millisecond
 const defaultTimeout = 30 * time.Second
 
 type Client struct {
@@ -84,11 +89,18 @@ func (c *Client) EnsureContainerRunning(ctx context.Context, containerID string)
 					inspect, err = c.dc.ContainerInspect(timeout, containerID)
 					if err != nil {
 						started <- err
+						break
 					}
 
 					if inspect.State.Health.Status == container.Unhealthy {
 						started <- errors.New("container is unhealthy: " + containerID)
+						break
+					} else if inspect.State.Health.Status == container.Healthy {
+						started <- nil
+						break
 					}
+
+					time.Sleep(loopBackoff)
 				}
 			}()
 
@@ -145,6 +157,13 @@ func (c *Client) Exec(ctx context.Context, containerID string, cmd []string) err
 		Str("container", containerID).
 		Msg("executing command in container")
 
+	inspect, err := c.dc.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return err
+	}
+
+	cmd = expandCmd(inspect, cmd)
+
 	exec, err := c.dc.ContainerExecCreate(
 		ctx,
 		containerID,
@@ -164,19 +183,12 @@ func (c *Client) Exec(ctx context.Context, containerID string, cmd []string) err
 }
 
 type execAttachWrapper struct {
+	io.Reader
 	response    types.HijackedResponse
 	errMutex    sync.Mutex
 	err         chan error
 	gotErrValue bool
 	returnedErr error
-}
-
-func (e *execAttachWrapper) Close() error {
-	return e.response.Conn.Close()
-}
-
-func (e *execAttachWrapper) Read(p []byte) (n int, err error) {
-	return e.response.Conn.Read(p)
 }
 
 func (e *execAttachWrapper) Error() error {
@@ -194,13 +206,20 @@ func (e *execAttachWrapper) Error() error {
 	return e.returnedErr
 }
 
-func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []string) (utils.ErrorReadCloser, error) {
+func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []string) (utils.ErrorReader, error) {
 	log.Info().
 		Ctx(ctx).
 		Str("engine", (string)(model.ContainerEngineDocker)).
-		Str("command", strings.Join(cmd, " ")).
+		Strs("command", cmd).
 		Str("container", containerID).
 		Msg("executing command (for output) in container")
+
+	inspect, err := c.dc.ContainerInspect(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd = expandCmd(inspect, cmd)
 
 	exec, err := c.dc.ContainerExecCreate(
 		ctx,
@@ -215,19 +234,32 @@ func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []s
 		return nil, err
 	}
 
-	attach, err := c.dc.ContainerExecAttach(ctx, containerID, container.ExecAttachOptions{})
+	attach, err := c.dc.ContainerExecAttach(ctx, exec.ID, container.ExecAttachOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	err = c.dc.ContainerExecStart(ctx, exec.ID, container.ExecStartOptions{})
+	// pipe is required because Docker multiplexes stdout and stderr into one stream
+	// and stdCopy is required to separate those streams (look to goroutine below)
+	reader, writer, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
 
-	wrapper := &execAttachWrapper{response: attach}
+	wrapper := &execAttachWrapper{
+		Reader: reader,
+		err:    make(chan error, 1),
+	}
 
 	go func() {
+		defer func() { _ = writer.Close() }()
+
+		_, err = stdcopy.StdCopy(writer, nil, attach.Reader)
+		if err != nil {
+			wrapper.err <- err
+			return
+		}
+
 		err = c.waitForExec(ctx, exec.ID)
 		wrapper.err <- err
 	}()
@@ -244,21 +276,22 @@ func (c *Client) waitForExec(ctx context.Context, execID string) error {
 
 		if !execInspect.Running {
 			if execInspect.ExitCode != 0 {
-				newErr := fmt.Errorf("exec container exited with %d", execInspect.ExitCode)
+				err = fmt.Errorf("exec container exited with %d", execInspect.ExitCode)
 				log.Error().
 					Ctx(ctx).
-					Err(newErr).
+					Err(err).
 					Str("engine", (string)(model.ContainerEngineDocker)).
-					AnErr("originalErr", err).
 					Str("container", execInspect.ContainerID).
 					Int("exitCode", execInspect.ExitCode).
 					Msg("container exec failed")
 
-				return newErr
+				return err
 			}
 
 			break
 		}
+
+		time.Sleep(loopBackoff)
 	}
 
 	return nil
@@ -374,4 +407,23 @@ func findOrCreateProject(projects map[string]model.ContainerBackupProject, inspe
 func isBorgdEnabled(inspect container.InspectResponse) bool {
 	borgdEnabledRaw, found := inspect.Config.Labels[model.LabelBorgdEnabled]
 	return found && borgdEnabledRaw == "true"
+}
+
+var envRegex = regexp.MustCompile(`\$\{(\S+)}`)
+
+func expandCmd(inspect container.InspectResponse, cmd []string) []string {
+	envMap := utils.ToMap(inspect.Config.Env)
+	for i := range cmd {
+		cmd[i] = envRegex.ReplaceAllStringFunc(cmd[i], func(s string) string {
+			name := s[2 : len(s)-1]
+			value, found := envMap[name]
+			if !found {
+				return s
+			} else {
+				return value
+			}
+		})
+	}
+
+	return cmd
 }

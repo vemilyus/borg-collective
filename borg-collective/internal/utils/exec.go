@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -35,7 +36,12 @@ func Exec(ctx context.Context, command []string) error {
 		Msg("executing command")
 
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	output, err := cmd.CombinedOutput()
+
+	if ctx.Value("test") == true {
+		cmd.Stderr = os.Stderr
+	}
+
+	output, err := cmd.Output()
 
 	if err != nil {
 		exitEvent := log.Warn().
@@ -111,7 +117,7 @@ func ExecWithOutput(ctx context.Context, command []string) (ErrorReader, error) 
 
 	wrapper := execOutputWrapper{
 		delegate: output,
-		err:      make(chan error),
+		err:      make(chan error, 1),
 	}
 
 	go func() {

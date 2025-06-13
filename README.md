@@ -32,7 +32,7 @@ Securely manages and provides secure values over the network.
 
 ### [`cred`](./credentials/cmd/cli)
 
-Interacts with `credstore` on the individual hosts. Mainly used by `borg-collective` to retrieve
+Interacts with `credstore` on the individual hosts. Intended for use by `borg-collective` to retrieve
 encryption keys for borg backups as needed.
 
 `cred` and `credstore` are tightly coupled and communicate via gRPC to keep network overhead

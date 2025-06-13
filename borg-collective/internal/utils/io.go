@@ -21,8 +21,3 @@ type ErrorReader interface {
 	io.Reader
 	Error() error
 }
-
-type ErrorReadCloser interface {
-	io.ReadCloser
-	ErrorReader
-}
