@@ -32,7 +32,7 @@ func absPath(path string) string {
 }
 
 func newClient() *Client {
-	dc, err := client.NewClientWithOpts(client.FromEnv)
+	dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		panic(err)
 	}

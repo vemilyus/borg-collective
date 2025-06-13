@@ -62,7 +62,7 @@ func main() {
 	}
 
 	var dockerClient *docker.Client
-	rawDockerClient, err := client.NewClientWithOpts(client.FromEnv)
+	rawDockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		log.Warn().Err(err).Msg("Docker not available")
 	} else {
