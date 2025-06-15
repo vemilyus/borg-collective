@@ -17,7 +17,7 @@ test: generate
 
 
 test-ci: generate
-	go test -json -coverprofile=coverage.txt ./borg-collective/... ./credentials/... \
+	go test -p 1 -json -coverprofile=coverage.txt ./borg-collective/... ./credentials/... \
 		| go-ctrf-json-reporter -output ctrf-report.json
 	gocov convert coverage.txt | gocov-xml > coverage.xml
 
