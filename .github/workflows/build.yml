@@ -121,6 +121,7 @@ jobs:
 
       - name: Compress executables
         run: |
+          chmod +x ./bin/*
           upx -9 ./bin/*
 
       - name: Create Release
