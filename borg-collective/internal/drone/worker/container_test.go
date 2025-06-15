@@ -14,3 +14,62 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 package worker
+
+import (
+	"context"
+	"testing"
+
+	"github.com/docker/docker/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/vemilyus/borg-collective/internal/drone/borg"
+	"github.com/vemilyus/borg-collective/internal/drone/config"
+	"github.com/vemilyus/borg-collective/internal/drone/container/docker"
+)
+
+func TestContainerProjectBackupJob(t *testing.T) {
+	config.Verbose = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	assert.NoError(t, err)
+
+	engine := docker.NewClient(dc)
+
+	borgClient, err := borg.NewClient(config.Config{Repo: config.RepositoryConfig{Location: t.TempDir()}})
+	assert.NoError(t, err)
+
+	err = borgClient.Init()
+	assert.NoError(t, err)
+
+	err = composeUp("test-paperless", "project.yml")
+	assert.NoError(t, err)
+
+	defer composeDown("test-paperless")
+
+	projects, err := engine.ReadProjects(ctx)
+	assert.NoError(t, err)
+
+	paperlessProject := projects[0]
+
+	worker := Worker{
+		ctx:          ctx,
+		borgClient:   borgClient,
+		dockerClient: engine,
+	}
+
+	job, err := worker.newContainerProjectBackupJob(paperlessProject)
+	assert.NoError(t, err)
+
+	backupJob, _ := job.(*containerProjectBackupJob)
+
+	backupOrder := make([]string, 0, len(backupJob.plan))
+	for _, backup := range backupJob.plan {
+		backupOrder = append(backupOrder, backup.ServiceName)
+	}
+
+	assert.Equal(t, []string{"server", "redis", "db"}, backupOrder)
+
+	backupJob.Run()
+}

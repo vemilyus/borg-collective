@@ -13,31 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-package docker
+package worker
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 
-	"github.com/docker/docker/client"
 	"github.com/vemilyus/borg-collective/internal/utils"
 )
 
 func absPath(path string) string {
 	_, b, _, _ := runtime.Caller(0)
-	return filepath.Join(filepath.Dir(b), path)
-}
-
-func newClient() *Client {
-	dc, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		panic(err)
-	}
-
-	return NewClient(dc)
+	return filepath.Join(filepath.Dir(b), "../container/docker", path)
 }
 
 func composeUp(project, file string) error {
@@ -53,13 +42,4 @@ func composeUp(project, file string) error {
 func composeDown(project string) {
 	ctx := context.WithValue(context.Background(), "test", true)
 	_ = utils.Exec(ctx, []string{"docker", "compose", "-p", project, "down", "-v"})
-}
-
-func containerName(project, containerName string) string {
-	return fmt.Sprintf("%s-%s-1", project, containerName)
-}
-
-func dockerStop(containerName string) error {
-	ctx := context.WithValue(context.Background(), "test", true)
-	return utils.Exec(ctx, []string{"docker", "stop", containerName})
 }

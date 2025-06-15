@@ -43,9 +43,7 @@ func (p containerPlan) Less(i, j int) bool {
 	a := p[i]
 	b := p[j]
 
-	return (b.Mode == model.BackupModeDependentOffline && slices.Contains(a.Dependencies, b.ServiceName)) ||
-		(a.Mode != model.BackupModeOffline && b.Mode == model.BackupModeOffline && slices.Contains(a.Dependencies, b.ServiceName)) ||
-		a.Mode == model.BackupModeDefault
+	return slices.Contains(a.Dependencies, b.ServiceName) || a.Mode < b.Mode
 }
 
 func backupPaths(ctx context.Context, borgClient *borg.Client, backupName string, paths []string) error {

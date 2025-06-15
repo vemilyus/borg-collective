@@ -50,7 +50,7 @@ func TestDockerWatch(t *testing.T) {
 	err = composeUp("test-paperless", "project.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown("test-paperless") }()
+	defer composeDown("test-paperless")
 
 	time.Sleep(1 * time.Second)
 
@@ -59,7 +59,7 @@ func TestDockerWatch(t *testing.T) {
 
 	updates = make([]model.ContainerBackupProject, 0, 5)
 
-	_ = composeDown("test-paperless")
+	composeDown("test-paperless")
 
 	time.Sleep(1 * time.Second)
 
@@ -91,7 +91,7 @@ func TestDockerWatch_IgnoreUnconfigured(t *testing.T) {
 	err = composeUp(proj, "simple.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown(proj) }()
+	defer composeDown(proj)
 
 	time.Sleep(1 * time.Second)
 }

@@ -32,7 +32,7 @@ func TestDockerEnsureContainerRunning(t *testing.T) {
 	err := composeUp(proj, "simple.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown(proj) }()
+	defer composeDown(proj)
 
 	cn := containerName(proj, "test-container")
 	err = dockerStop(cn)
@@ -49,7 +49,7 @@ func TestDockerEnsureContainerRunning_WithHealth(t *testing.T) {
 	err := composeUp(proj, "simple.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown(proj) }()
+	defer composeDown(proj)
 
 	cn := containerName(proj, "test-container-with-health")
 	err = dockerStop(cn)
@@ -66,7 +66,7 @@ func TestDockerEnsureContainerStopped(t *testing.T) {
 	err := composeUp(proj, "simple.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown(proj) }()
+	defer composeDown(proj)
 
 	cn := containerName(proj, "test-container")
 	client := newClient()
@@ -80,7 +80,7 @@ func TestDockerExec(t *testing.T) {
 	err := composeUp(proj, "simple.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown(proj) }()
+	defer composeDown(proj)
 
 	cn := containerName(proj, "test-container")
 	client := newClient()
@@ -97,7 +97,7 @@ func TestDockerExecWithOutput(t *testing.T) {
 	err := composeUp(proj, "simple.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown(proj) }()
+	defer composeDown(proj)
 
 	cn := containerName(proj, "test-container")
 	expectedCount := 524288
@@ -147,7 +147,7 @@ func TestDockerReadProjects(t *testing.T) {
 	err := composeUp("test-paperless", "project.yml")
 	assert.NoError(t, err)
 
-	defer func() { _ = composeDown("test-paperless") }()
+	defer composeDown("test-paperless")
 
 	client := newClient()
 	projects, err := client.ReadProjects(context.Background())

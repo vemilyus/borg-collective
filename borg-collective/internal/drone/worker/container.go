@@ -18,7 +18,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"maps"
 	"path"
 	"slices"
 	"sort"
@@ -47,11 +46,16 @@ func (w *Worker) newContainerProjectBackupJob(project model.ContainerBackupProje
 		return nil, fmt.Errorf("nothing to do")
 	}
 
-	plan := containerPlan(slices.Collect(maps.Values(project.Containers)))
+	plan := make(containerPlan, 0)
+	for _, ctnr := range project.Containers {
+		if ctnr.NeedsBackup() {
+			plan = append(plan, ctnr)
+		}
+	}
 	sort.Sort(plan)
 
 	for _, ctnr := range project.Containers {
-		if !ctnr.Exec.Stdout {
+		if ctnr.Exec != nil && !ctnr.Exec.Stdout {
 			for _, cPath := range ctnr.Exec.Paths {
 				_, found := findSourceForInContainerPath(&ctnr, cPath)
 				if !found {
@@ -102,10 +106,10 @@ func (d *containerProjectBackupJob) Run() {
 		switch backupCtnr.Mode {
 		case model.BackupModeDefault:
 			d.runOnlineBackup(backupCtnr, backupName)
-		case model.BackupModeDependentOffline:
-			d.runDependentOfflineBackup(backupCtnr, backupName)
 		case model.BackupModeOffline:
 			d.runOfflineBackup(backupCtnr, backupName)
+		case model.BackupModeDependentOffline:
+			d.runDependentOfflineBackup(backupCtnr, backupName)
 		default:
 			log.Error().
 				Ctx(d.ctx).
@@ -152,6 +156,28 @@ func (d *containerProjectBackupJob) runOnlineBackup(backupCtnr model.ContainerBa
 		return
 	}
 
+	dependencies := d.findDependencies(backupCtnr)
+	if len(dependencies) > 0 {
+		eg, egCtx := errgroup.WithContext(d.ctx)
+		eg.SetLimit(len(dependencies))
+		for _, dep := range dependencies {
+			eg.Go(func() error {
+				return d.engine.EnsureContainerRunning(egCtx, dep.ID)
+			})
+		}
+
+		err = eg.Wait()
+		if err != nil {
+			log.Warn().
+				Ctx(d.ctx).
+				Err(err).
+				Fields(d.logFields(backupCtnr)).
+				Msg("failed to ensure dependencies are running")
+
+			return
+		}
+	}
+
 	if backupCtnr.Exec != nil {
 		d.runExecBackup(backupCtnr, backupName)
 	} else {
@@ -174,6 +200,28 @@ func (d *containerProjectBackupJob) runDependentOfflineBackup(backupCtnr model.C
 			Msg("failed to ensure container running for online backup (dependents offline)")
 
 		return
+	}
+
+	dependencies := d.findDependencies(backupCtnr)
+	if len(dependencies) > 0 {
+		eg, egCtx := errgroup.WithContext(d.ctx)
+		eg.SetLimit(len(dependencies))
+		for _, dep := range dependencies {
+			eg.Go(func() error {
+				return d.engine.EnsureContainerRunning(egCtx, dep.ID)
+			})
+		}
+
+		err = eg.Wait()
+		if err != nil {
+			log.Warn().
+				Ctx(d.ctx).
+				Err(err).
+				Fields(d.logFields(backupCtnr)).
+				Msg("failed to ensure dependencies are running")
+
+			return
+		}
 	}
 
 	dependents := d.findDependents(backupCtnr)
@@ -247,14 +295,6 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 
 		result, err := d.borgClient.CreateWithInput(d.ctx, utils.ArchiveName(backupName), output)
 
-		if output.Error() != nil {
-			log.Warn().
-				Ctx(d.ctx).
-				Err(output.Error()).
-				Fields(d.logFields(backupCtnr)).
-				Msg("exec command failed, backup may be incomplete")
-		}
-
 		if err != nil {
 			log.Warn().
 				Ctx(d.ctx).
@@ -263,6 +303,14 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 				Msg("backup failed")
 
 			return
+		}
+
+		if output.Error() != nil {
+			log.Warn().
+				Ctx(d.ctx).
+				Err(output.Error()).
+				Fields(d.logFields(backupCtnr)).
+				Msg("exec command failed, backup may be incomplete")
 		}
 
 		logBackupComplete(d.ctx, backupName, result)
@@ -308,7 +356,7 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 }
 
 func (d *containerProjectBackupJob) runVolumeBackup(backupCtnr model.ContainerBackup, backupName string) {
-	paths := make([]string, len(backupCtnr.BackupVolumes))
+	paths := make([]string, 0, len(backupCtnr.BackupVolumes))
 	for _, vol := range backupCtnr.BackupVolumes {
 		paths = append(paths, vol.Source)
 	}
@@ -342,6 +390,17 @@ func findSourceForInContainerPath(ctnr *model.ContainerBackup, cPath string) (st
 	}
 
 	return "", false
+}
+
+func (d *containerProjectBackupJob) findDependencies(backup model.ContainerBackup) []model.ContainerBackup {
+	result := make([]model.ContainerBackup, 0, len(backup.Dependencies))
+
+	for _, dep := range backup.Dependencies {
+		ctnr, _ := d.project.Containers[dep]
+		result = append(result, ctnr)
+	}
+
+	return result
 }
 
 func (d *containerProjectBackupJob) findDependents(backup model.ContainerBackup) []model.ContainerBackup {

@@ -41,8 +41,8 @@ type BackupMode uint8
 
 const (
 	BackupModeDefault BackupMode = 1 + iota
-	BackupModeDependentOffline
 	BackupModeOffline
+	BackupModeDependentOffline
 )
 
 //goland:noinspection GoMixedReceiverTypes
