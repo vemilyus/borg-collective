@@ -33,8 +33,8 @@ type staticBackupJob struct {
 	backup     config.BackupConfig
 }
 
-func (w *Worker) newStaticBackupJob(backup config.BackupConfig) (cron.Job, error) {
-	return &staticBackupJob{w.ctx, w.borgClient, backup}, nil
+func (w *Worker) newStaticBackupJob(backup config.BackupConfig) cron.Job {
+	return &staticBackupJob{w.ctx, w.borgClient, backup}
 }
 
 func (s staticBackupJob) Run() {

@@ -78,11 +78,7 @@ func main() {
 
 	wrk := worker.NewWorker(ctx, configPath, borgClient, dockerClient, scheduler)
 	wrk.ScheduleRepoCompaction(*initialConfig)
-
-	err = wrk.ScheduleStaticBackups(initialConfig.Backups)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to schedule backups")
-	}
+	wrk.ScheduleStaticBackups(initialConfig.Backups)
 
 	if dockerClient != nil {
 		dockerBackups, err := dockerClient.ReadProjects(ctx)

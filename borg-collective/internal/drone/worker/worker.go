@@ -18,6 +18,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
@@ -28,15 +29,16 @@ import (
 )
 
 type Worker struct {
-	configPath   string
-	borgClient   *borg.Client
-	dockerClient *docker.Client
-	scheduler    *cron.Cron
-	ctx          context.Context
-	ctxCancel    context.CancelFunc
-	compactJobId cron.EntryID
-	staticJobIds []cron.EntryID
-	dockerJobIds map[string]cron.EntryID
+	configPath     string
+	borgClient     *borg.Client
+	dockerClient   *docker.Client
+	scheduler      *cron.Cron
+	schedulerMutex sync.Mutex
+	ctx            context.Context
+	ctxCancel      context.CancelFunc
+	compactJobId   cron.EntryID
+	staticJobIds   []cron.EntryID
+	dockerJobIds   map[string]cron.EntryID
 }
 
 func NewWorker(
@@ -73,12 +75,18 @@ func (w *Worker) Run() error {
 		return err
 	}
 
-	var dockerWatch *docker.Watch
+	var dockerUpdates <-chan model.ContainerBackupProject
+	var dockerErrors <-chan error
 	if w.dockerClient != nil {
-		dockerWatch, err = w.dockerClient.Watch(w.ctx)
+		dockerWatch, err := w.dockerClient.Watch(w.ctx)
 		if err != nil {
 			return err
 		}
+
+		defer func() { _ = dockerWatch.Close() }()
+
+		dockerUpdates = dockerWatch.Updates()
+		dockerErrors = dockerWatch.Errors()
 	}
 
 	log.Info().Ctx(w.ctx).Msg("starting cron scheduler")
@@ -91,27 +99,20 @@ func (w *Worker) Run() error {
 		case cfg := <-configWatch.Updates():
 			w.borgClient.SetConfig(cfg)
 			w.ScheduleRepoCompaction(cfg)
-
-			err = w.ScheduleStaticBackups(cfg.Backups)
-			if err != nil {
-				log.Warn().
-					Ctx(w.ctx).
-					Err(err).
-					Msg("failed to (re)schedule static backups")
-			}
+			w.ScheduleStaticBackups(cfg.Backups)
 		case err = <-configWatch.Errors():
 			return err
-		case proj := <-dockerWatch.Updates():
+		case proj := <-dockerUpdates:
 			if proj.Engine == model.ContainerEngineDocker {
 				err = w.scheduleDockerBackup(proj)
 				if err != nil {
 					log.Warn().
 						Ctx(w.ctx).
 						Err(err).
-						Msg("failed to (re)schedule Docker backup project")
+						Msg("failed to schedule Docker backup project")
 				}
 			}
-		case err = <-dockerWatch.Errors():
+		case err = <-dockerErrors:
 			return err
 		case <-w.ctx.Done():
 			return nil
@@ -134,6 +135,9 @@ func (w *Worker) RunOnce() error {
 }
 
 func (w *Worker) ScheduleRepoCompaction(cfg config.Config) {
+	w.schedulerMutex.Lock()
+	defer w.schedulerMutex.Unlock()
+
 	if w.compactJobId != 0 {
 		w.scheduler.Remove(w.compactJobId)
 		w.compactJobId = 0
@@ -145,21 +149,18 @@ func (w *Worker) ScheduleRepoCompaction(cfg config.Config) {
 	}
 }
 
-func (w *Worker) ScheduleStaticBackups(backups []config.BackupConfig) error {
-	prevEntries := w.scheduler.Entries()
-	oldStaticJobIds := w.staticJobIds
-	w.staticJobIds = make([]cron.EntryID, 0)
+func (w *Worker) ScheduleStaticBackups(backups []config.BackupConfig) {
+	w.schedulerMutex.Lock()
+	defer w.schedulerMutex.Unlock()
 
-	for _, jobId := range oldStaticJobIds {
+	for _, jobId := range w.staticJobIds[:] {
 		w.scheduler.Remove(jobId)
 	}
 
+	w.staticJobIds = make([]cron.EntryID, 0)
+
 	for _, backup := range backups {
-		job, err := w.newStaticBackupJob(backup)
-		if err != nil {
-			w.restorePreviousStaticBackups(oldStaticJobIds, prevEntries)
-			return err
-		}
+		job := w.newStaticBackupJob(backup)
 
 		backupJson, _ := json.Marshal(backup)
 		log.Info().
@@ -169,25 +170,6 @@ func (w *Worker) ScheduleStaticBackups(backups []config.BackupConfig) error {
 
 		jobId := w.scheduler.Schedule(backup.Schedule(), job)
 		w.staticJobIds = append(w.staticJobIds, jobId)
-	}
-
-	return nil
-}
-
-func (w *Worker) restorePreviousStaticBackups(prevJobIds []cron.EntryID, prevEntries []cron.Entry) {
-	for _, jobId := range w.staticJobIds {
-		w.scheduler.Remove(jobId)
-	}
-
-	w.staticJobIds = make([]cron.EntryID, 0)
-
-	for _, oldJobId := range prevJobIds {
-		for _, entry := range prevEntries {
-			if entry.ID == oldJobId {
-				jobId := w.scheduler.Schedule(entry.Schedule, entry.Job)
-				w.staticJobIds = append(w.staticJobIds, jobId)
-			}
-		}
 	}
 }
 
@@ -205,11 +187,11 @@ func (w *Worker) ScheduleContainerBackups(backups []model.ContainerBackupProject
 }
 
 func (w *Worker) scheduleDockerBackup(cbp model.ContainerBackupProject) error {
-	jobId, found := w.dockerJobIds[cbp.ProjectName]
-	var prevEntry cron.Entry
-	if found {
-		prevEntry = w.scheduler.Entry(jobId)
+	w.schedulerMutex.Lock()
+	defer w.schedulerMutex.Unlock()
 
+	jobId, found := w.dockerJobIds[cbp.ProjectName]
+	if found {
 		log.Info().
 			Ctx(w.ctx).
 			Str("projectName", cbp.ProjectName).
@@ -222,20 +204,6 @@ func (w *Worker) scheduleDockerBackup(cbp model.ContainerBackupProject) error {
 	if len(cbp.Containers) > 0 {
 		job, err := w.newContainerProjectBackupJob(cbp)
 		if err != nil {
-			if found {
-				if log.Debug().Enabled() {
-					log.Info().
-						Ctx(w.ctx).
-						Err(err).
-						Str("projectName", cbp.ProjectName).
-						Msg("rescheduling container backup project")
-				}
-
-				jobId = w.scheduler.Schedule(prevEntry.Schedule, prevEntry.Job)
-
-				w.dockerJobIds[cbp.ProjectName] = jobId
-			}
-
 			return err
 		}
 

@@ -162,7 +162,8 @@ func (c *Client) Exec(ctx context.Context, containerID string, cmd []string) err
 		return err
 	}
 
-	cmd = expandCmd(inspect, cmd)
+	envMap := utils.ToMap(inspect.Config.Env)
+	cmd = expandCmd(cmd, envMap)
 
 	exec, err := c.dc.ContainerExecCreate(
 		ctx,
@@ -219,7 +220,8 @@ func (c *Client) ExecWithOutput(ctx context.Context, containerID string, cmd []s
 		return nil, err
 	}
 
-	cmd = expandCmd(inspect, cmd)
+	envMap := utils.ToMap(inspect.Config.Env)
+	cmd = expandCmd(cmd, envMap)
 
 	exec, err := c.dc.ContainerExecCreate(
 		ctx,
@@ -409,14 +411,18 @@ func isBorgdEnabled(inspect container.InspectResponse) bool {
 	return found && borgdEnabledRaw == "true"
 }
 
-var envRegex = regexp.MustCompile(`\$\{(\S+)}`)
+var envVarRegex = regexp.MustCompile(`&\{(\S+?)}|&\S+?`)
 
-func expandCmd(inspect container.InspectResponse, cmd []string) []string {
-	envMap := utils.ToMap(inspect.Config.Env)
+func expandCmd(cmd []string, env map[string]string) []string {
 	for i := range cmd {
-		cmd[i] = envRegex.ReplaceAllStringFunc(cmd[i], func(s string) string {
-			name := s[2 : len(s)-1]
-			value, found := envMap[name]
+		cmd[i] = envVarRegex.ReplaceAllStringFunc(cmd[i], func(s string) string {
+			var name string
+			if s[1] == '{' {
+				name = s[2 : len(s)-1]
+			} else {
+				name = s[1:]
+			}
+			value, found := env[name]
 			if !found {
 				return s
 			} else {

@@ -246,6 +246,15 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 		}
 
 		result, err := d.borgClient.CreateWithInput(d.ctx, utils.ArchiveName(backupName), output)
+
+		if output.Error() != nil {
+			log.Warn().
+				Ctx(d.ctx).
+				Err(output.Error()).
+				Fields(d.logFields(backupCtnr)).
+				Msg("exec command failed, backup may be incomplete")
+		}
+
 		if err != nil {
 			log.Warn().
 				Ctx(d.ctx).
@@ -254,14 +263,6 @@ func (d *containerProjectBackupJob) runExecBackup(backupCtnr model.ContainerBack
 				Msg("backup failed")
 
 			return
-		}
-
-		if output.Error() != nil {
-			log.Warn().
-				Ctx(d.ctx).
-				Err(output.Error()).
-				Fields(d.logFields(backupCtnr)).
-				Msg("exec command failed, backup may be incomplete")
 		}
 
 		logBackupComplete(d.ctx, backupName, result)

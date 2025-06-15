@@ -18,7 +18,6 @@ package docker
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -53,8 +52,6 @@ func mapInspectToProject(inspect container.InspectResponse) (*model.ContainerBac
 		Containers:  make(map[string]model.ContainerBackup),
 	}, nil
 }
-
-var ampEnvEscape = regexp.MustCompile(`&\{`)
 
 func mapInspectToContainerBackup(inspect container.InspectResponse) (*model.ContainerBackup, error) {
 	upperDir := ""
@@ -97,7 +94,6 @@ func mapInspectToContainerBackup(inspect container.InspectResponse) (*model.Cont
 		} else if strings.HasPrefix(key, model.LabelDependenciesPfx) {
 			result.Dependencies = append(result.Dependencies, value)
 		} else if key == model.LabelExec {
-			value = ampEnvEscape.ReplaceAllString(value, "${")
 			exec.Command = utils.SplitCommandLine(value)
 		} else if key == model.LabelExecStdout {
 			exec.Stdout = true
