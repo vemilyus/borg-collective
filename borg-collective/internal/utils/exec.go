@@ -138,10 +138,10 @@ func ExecWithOutput(ctx context.Context, command []string) (ErrorReader, error) 
 
 		_, err = io.Copy(outputWriter, stdOutPipe)
 		if err != nil {
-			log.Warn().
-				Ctx(ctx).
-				Err(err).
-				Msg("error reading output")
+			defer func() { _ = stdOutPipe.Close() }() // would usually be closed by Wait, but we're not getting that far
+
+			wrapper.err <- errors.Wrap(err, "error copying output")
+			return
 		}
 
 		err = cmd.Wait()
