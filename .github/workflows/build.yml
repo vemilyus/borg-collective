@@ -60,7 +60,7 @@ jobs:
           esac
           
           GOARCH_LIST=(arm arm64 amd64)
-          for ARCH in "${GOARCH_LIST[@]}}"; do
+          for ARCH in "${GOARCH_LIST[@]}"; do
             if [[ "$ARCH" == "arm" ]]; then
               suffix_arch=armv7l
             else
@@ -118,6 +118,10 @@ jobs:
         with:
           name: ${{ github.run_id }}_artifacts
           path: bin
+
+      - name: Compress executables
+        run: |
+          upx -9 ./bin/*
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
