@@ -69,7 +69,7 @@ func Exec(ctx context.Context, command []string) error {
 }
 
 type execOutputWrapper struct {
-	delegate    io.ReadCloser
+	delegate    *os.File
 	errMutex    sync.Mutex
 	err         chan error
 	gotErrValue bool
@@ -77,7 +77,13 @@ type execOutputWrapper struct {
 }
 
 func (e *execOutputWrapper) Read(p []byte) (n int, err error) {
-	return e.delegate.Read(p)
+	res, err := e.delegate.Read(p)
+	if err != nil {
+		_ = e.delegate.Close()
+		return 0, err
+	}
+
+	return res, nil
 }
 
 func (e *execOutputWrapper) Error() error {
@@ -105,9 +111,16 @@ func ExecWithOutput(ctx context.Context, command []string) (ErrorReader, error) 
 	stderr := new(bytes.Buffer)
 	cmd.Stderr = stderr
 
-	output, err := cmd.StdoutPipe()
+	output, outputWriter, err := os.Pipe()
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "error creating pipe")
+	}
+
+	stdOutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = output.Close()
+		_ = outputWriter.Close()
+		return nil, errors.Wrap(err, "error creating pipe")
 	}
 
 	err = cmd.Start()
@@ -121,6 +134,16 @@ func ExecWithOutput(ctx context.Context, command []string) (ErrorReader, error) 
 	}
 
 	go func() {
+		defer func() { _ = outputWriter.Close() }()
+
+		_, err = io.Copy(outputWriter, stdOutPipe)
+		if err != nil {
+			log.Warn().
+				Ctx(ctx).
+				Err(err).
+				Msg("error reading output")
+		}
+
 		err = cmd.Wait()
 		if err != nil {
 			wrapper.err <- errors.Wrap(err, "command execution failed")
