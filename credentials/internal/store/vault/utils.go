@@ -27,17 +27,27 @@ import (
 	"errors"
 	"filippo.io/age"
 	"fmt"
-	"github.com/awnumar/memguard"
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 	"io"
 	"path/filepath"
 	"runtime"
 	"time"
 	"unsafe"
+
+	"github.com/awnumar/memguard"
+	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 )
 
-func loadRecoveryRecipient(backend Backend) (*age.X25519Recipient, error) {
+func createRecoveryHash(recipient age.X25519Recipient, secret *memguard.LockedBuffer) string {
+	bytesToHash := []byte(recipient.String())
+	bytesToHash = append(bytesToHash, secret.Bytes()...)
+
+	defer memguard.WipeBytes(bytesToHash)
+
+	return sum(bytesToHash)
+}
+
+func loadRecoveryRecipient(backend Backend, secret *memguard.LockedBuffer) (*age.X25519Recipient, error) {
 	recBytes, err := backend.ReadFile(".recovery")
 	if err != nil {
 		return nil, err
@@ -45,13 +55,40 @@ func loadRecoveryRecipient(backend Backend) (*age.X25519Recipient, error) {
 		return nil, nil
 	}
 
-	return age.ParseX25519Recipient(string(recBytes))
+	recSumBytes, err := backend.ReadFile(".recovery.sum")
+	if err != nil {
+		return nil, err
+	} else if recSumBytes == nil {
+		return nil, fmt.Errorf(".recovery.sum is missing")
+	}
+
+	recipient, err := age.ParseX25519Recipient(string(recBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	checkSum := createRecoveryHash(*recipient, secret)
+	if string(recSumBytes) != checkSum {
+		return nil, fmt.Errorf(".recovery.sum does not match")
+	}
+
+	return recipient, nil
 }
 
-func writeRecoveryRecipient(backend Backend, recipient age.X25519Recipient) error {
-	recBytes := []byte(recipient.String())
+func writeRecoveryRecipient(backend Backend, recipient age.X25519Recipient, secret *memguard.LockedBuffer) error {
+	err := backend.WriteFile(".recovery", []byte(recipient.String()))
+	if err != nil {
+		return err
+	}
 
-	return backend.WriteFile(".recovery", recBytes)
+	recoveryHash := createRecoveryHash(recipient, secret)
+	err = backend.WriteFile(".recovery.sum", []byte(recoveryHash))
+	if err != nil {
+		_, _ = backend.DeleteFile(".recovery")
+		return err
+	}
+
+	return nil
 }
 
 func readIdentity(backend Backend, identityKey *memguard.LockedBuffer) (*age.X25519Identity, error) {
@@ -206,14 +243,6 @@ func copyFile(backend Backend, src, dest string) error {
 func sum(data []byte) string {
 	raw := sha256.Sum256(data)
 	return hex.EncodeToString(raw[:])
-}
-
-func wipeSum(sum [32]byte) {
-	for i := range sum {
-		sum[i] = 0
-	}
-
-	runtime.KeepAlive(sum)
 }
 
 func wipeBuffer(buf *bytes.Buffer, length int) {

@@ -20,6 +20,10 @@ Helps to setup and control as many Borg backups as possible with minimal configu
 
 - Running inside a container
 
+## Docs
+
+[Go here](./docs/index.md)
+
 ## Tools
 
 ### [`borg-collective`](borg-collective)

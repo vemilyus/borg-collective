@@ -24,15 +24,13 @@ import (
 type State struct {
 	config       *store.Config
 	vault        *vault.Vault
-	version      string
 	isProduction bool
 }
 
-func NewState(config *store.Config, vault *vault.Vault, version string, prod bool) *State {
+func NewState(config *store.Config, vault *vault.Vault, prod bool) *State {
 	return &State{
 		config:       config,
 		vault:        vault,
-		version:      version,
 		isProduction: prod,
 	}
 }
@@ -47,7 +45,7 @@ func (s *State) IsProduction() bool {
 
 func (s *State) StoreInfo() *proto.StoreInfo {
 	return &proto.StoreInfo{
-		Version:       s.version,
+		Version:       store.Version.String(),
 		IsVaultLocked: s.vault.IsLocked(),
 		IsProduction:  s.IsProduction(),
 	}

@@ -16,24 +16,28 @@
 package main
 
 import (
+	"github.com/Masterminds/semver/v3"
 	"github.com/awnumar/memguard"
 	"github.com/integrii/flaggy"
 	"github.com/rs/zerolog/log"
 	"github.com/vemilyus/borg-collective/credentials/internal/logging"
 	"github.com/vemilyus/borg-collective/credentials/internal/store"
+	"github.com/vemilyus/borg-collective/credentials/internal/store/metrics"
 	"github.com/vemilyus/borg-collective/credentials/internal/store/server"
 	"github.com/vemilyus/borg-collective/credentials/internal/store/service"
 	"github.com/vemilyus/borg-collective/credentials/internal/store/vault"
 )
 
 var (
-	version = "unknown"
+	version = "0.0.0+devel"
 
 	prod       bool
 	configPath string
 )
 
 func main() {
+	store.Version = semver.MustParse(version)
+
 	memguard.CatchInterrupt()
 	defer memguard.Purge()
 
@@ -54,7 +58,6 @@ func main() {
 	state := service.NewState(
 		config,
 		vaultInstance,
-		version,
 		prod,
 	)
 
@@ -69,8 +72,14 @@ func main() {
 
 	log.Info().Msgf("Listening on %s", config.ListenAddress)
 
-	err = srv.Serve()
+	asyncErr := make(chan error)
+	go func() { asyncErr <- srv.Serve() }()
+	if config.MetricsListenAddress != nil {
+		log.Info().Msgf("Metrics available at %s/metrics", *config.MetricsListenAddress)
+		go func() { asyncErr <- metrics.Serve(config) }()
+	}
 
+	err = <-asyncErr
 	if err != nil {
 		log.Fatal().Err(err).Send()
 	}
@@ -79,7 +88,7 @@ func main() {
 func parseArgs() {
 	flaggy.SetName("credstore")
 	flaggy.SetDescription("Securely stores and provides credentials over the network")
-	flaggy.SetVersion(version)
+	flaggy.SetVersion(store.Version.String())
 
 	flaggy.Bool(&prod, "p", "production", "Indicates whether to run in production mode (requires TLS config)")
 	flaggy.AddPositionalValue(&configPath, "CONFIG-PATH", 1, true, "Path to the configuration file")

@@ -17,11 +17,13 @@ package service
 
 import (
 	"errors"
+
 	"filippo.io/age"
 	"github.com/awnumar/memguard"
 	"github.com/google/uuid"
 	"github.com/vemilyus/borg-collective/credentials/internal/proto"
 	"github.com/vemilyus/borg-collective/credentials/internal/store/vault"
+	"google.golang.org/grpc/peer"
 )
 
 func (s *State) SetRecoveryRecipient(request *proto.RecoveryRecipient) error {
@@ -107,7 +109,7 @@ func (s *State) DeleteVaultItems(request *proto.ItemDeletion) ([]uuid.UUID, erro
 	return deletedItemIds, nil
 }
 
-func (s *State) ReadVaultItem(request *proto.ItemRequest) (*proto.ItemValue, error) {
+func (s *State) ReadVaultItem(request *proto.ItemRequest, p *peer.Peer) (*proto.ItemValue, error) {
 	var err error
 	if request.GetAdmin() != nil {
 		err = s.vault.VerifyPassphrase(request.GetAdmin().GetPassphrase())
@@ -122,7 +124,13 @@ func (s *State) ReadVaultItem(request *proto.ItemRequest) (*proto.ItemValue, err
 		return nil, err
 	}
 
-	value, err := s.vault.GetItem(itemId)
+	var value *memguard.LockedBuffer
+	if request.GetClient() != nil {
+		value, err = s.vault.GetItemForPeer(itemId, p.Addr.String())
+	} else {
+		value, err = s.vault.GetItem(itemId)
+	}
+
 	if err != nil {
 		return nil, err
 	}

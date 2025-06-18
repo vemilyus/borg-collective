@@ -19,20 +19,47 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
-	"filippo.io/age"
 	"fmt"
-	"github.com/awnumar/memguard"
-	"github.com/google/uuid"
-	"github.com/rs/zerolog/log"
 	"io"
 	"maps"
 	"slices"
 	"sync"
 	"time"
 	"unsafe"
+
+	"filippo.io/age"
+	"github.com/awnumar/memguard"
+	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/rs/zerolog/log"
 )
 
 const sentinel = "sentinel"
+
+var vaultOpenGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Namespace: "credstore",
+	Subsystem: "vault",
+	Name:      "unlocked",
+})
+
+var vaultItemsCount = promauto.NewGauge(prometheus.GaugeOpts{
+	Namespace: "credstore",
+	Subsystem: "vault",
+	Name:      "items_count",
+})
+
+var vaultItemReads = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "credstore",
+	Subsystem: "vault",
+	Name:      "item_reads",
+})
+
+var vaultItemReadAttempts = promauto.NewCounter(prometheus.CounterOpts{
+	Namespace: "credstore",
+	Subsystem: "vault",
+	Name:      "item_read_attempts",
+})
 
 type Options struct {
 	Backend
@@ -42,6 +69,7 @@ type Options struct {
 type Item struct {
 	Id          uuid.UUID `json:"id"`
 	Description string    `json:"description"`
+	Peer        *string   `json:"peer"`
 	Checksum    string    `json:"checksum"`
 	ModifiedAt  time.Time `json:"modified_at"`
 }
@@ -52,7 +80,6 @@ type Vault struct {
 	identityKey        *memguard.Enclave
 	metadataHmacSecret *memguard.Enclave
 	primaryRecipient   *age.X25519Recipient
-	recoveryRecipient  *age.X25519Recipient
 	items              map[uuid.UUID]Item
 }
 
@@ -74,18 +101,12 @@ func NewVault(options *Options) (*Vault, error) {
 		return nil, fmt.Errorf("failed to initialize backend: %w", err)
 	}
 
-	recoveryRecipient, err := loadRecoveryRecipient(options.Backend)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load recovery recipient: %v", err)
-	}
-
 	return &Vault{
 		lock:               sync.RWMutex{},
 		options:            options,
 		identityKey:        nil,
 		metadataHmacSecret: nil,
 		primaryRecipient:   nil,
-		recoveryRecipient:  recoveryRecipient,
 		items:              nil,
 	}, nil
 }
@@ -166,6 +187,11 @@ func (v *Vault) Unlock(passphrase string) error {
 
 	defer metadataHmacSecret.Destroy()
 
+	err = v.upgrade(metadataHmacSecret)
+	if err != nil {
+		return fmt.Errorf("failed to upgrade vault: %w", err)
+	}
+
 	v.items, err = readAllMetadataUnsafe(v.backend(), metadataHmacSecret)
 	if err != nil {
 		v.identityKey = nil
@@ -176,6 +202,9 @@ func (v *Vault) Unlock(passphrase string) error {
 		log.Error().Err(err).Msg("failed to read all item metadata")
 		return errors.New("failed to verify passphrase")
 	}
+
+	vaultOpenGauge.Set(1)
+	vaultItemsCount.Set(float64(len(v.items)))
 
 	return nil
 }
@@ -231,6 +260,8 @@ func (v *Vault) Lock() error {
 	v.primaryRecipient = nil
 	v.items = nil
 
+	vaultOpenGauge.Set(0)
+
 	return nil
 }
 
@@ -257,14 +288,19 @@ func (v *Vault) SetRecoveryRecipient(recipient age.X25519Recipient) error {
 
 	defer metadataHmacSecret.Destroy()
 
-	if err := writeRecoveryRecipient(v.backend(), recipient); err != nil {
+	oldRecoveryRecipient, err := loadRecoveryRecipient(v.backend(), metadataHmacSecret)
+	if err != nil {
+		return err
+	}
+
+	if err := writeRecoveryRecipient(v.backend(), recipient, metadataHmacSecret); err != nil {
 		log.Error().Err(err).Msg("failed to write recovery recipient")
 
-		if v.recoveryRecipient != nil {
+		if oldRecoveryRecipient != nil {
 			for i := 0; i < 3; i++ {
 				time.Sleep(time.Second)
 
-				err = writeRecoveryRecipient(v.backend(), *v.recoveryRecipient)
+				err = writeRecoveryRecipient(v.backend(), *oldRecoveryRecipient, metadataHmacSecret)
 				if err == nil {
 					break
 				}
@@ -277,8 +313,6 @@ func (v *Vault) SetRecoveryRecipient(recipient age.X25519Recipient) error {
 
 		return errors.New("failed to set recovery recipient")
 	}
-
-	v.recoveryRecipient = &recipient
 
 	items, err := readAllMetadataUnsafe(v.backend(), metadataHmacSecret)
 	metadataHmacSecret.Destroy()
@@ -339,6 +373,8 @@ func (v *Vault) CreateItem(description string) (*Item, error) {
 
 	v.items[id] = item
 
+	vaultItemsCount.Set(float64(len(v.items)))
+
 	return &item, nil
 }
 
@@ -355,12 +391,16 @@ func (v *Vault) DeleteItem(id uuid.UUID) error {
 		log.Warn().Str("item", id.String()).Msg("no such item")
 	}
 
+	vaultItemsCount.Set(float64(len(v.items)))
+
 	return nil
 }
 
 func (v *Vault) GetItem(id uuid.UUID) (*memguard.LockedBuffer, error) {
 	v.lock.RLock()
 	defer v.lock.RUnlock()
+
+	vaultItemReadAttempts.Inc()
 
 	if v.IsLocked() {
 		return nil, errors.New("vault is locked")
@@ -369,6 +409,34 @@ func (v *Vault) GetItem(id uuid.UUID) (*memguard.LockedBuffer, error) {
 	item, ok := v.items[id]
 	if !ok {
 		return nil, errors.New("item not found")
+	}
+
+	if item.Checksum == "" {
+		return nil, nil
+	}
+
+	return v.readItemValueUnsafe(item)
+}
+
+func (v *Vault) GetItemForPeer(id uuid.UUID, peer string) (*memguard.LockedBuffer, error) {
+	// need RW lock here because verifyPeerUnsafe potentially modifies item metadata
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
+	vaultItemReadAttempts.Inc()
+
+	if v.IsLocked() {
+		return nil, errors.New("vault is locked")
+	}
+
+	item, ok := v.items[id]
+	if !ok {
+		return nil, errors.New("item not found")
+	}
+
+	err := v.verifyPeerUnsafe(item, peer)
+	if err != nil {
+		return nil, err
 	}
 
 	if item.Checksum == "" {
@@ -427,7 +495,36 @@ func (v *Vault) readItemValueUnsafe(item Item) (*memguard.LockedBuffer, error) {
 		return nil, fmt.Errorf("failed to read item value (%s): checksum mismatch", item.Id)
 	}
 
+	vaultItemReads.Inc()
+
 	return value, nil
+}
+
+func (v *Vault) verifyPeerUnsafe(item Item, peer string) error {
+	metadataHmacSecret, err := v.metadataHmacSecret.Open()
+	if err != nil {
+		log.Error().Err(err).Msg("failed to access metadata HMAC secret")
+		return fmt.Errorf("failed to verify peer (%s): %s", peer, item.Id.String())
+	}
+
+	defer metadataHmacSecret.Destroy()
+
+	if item.Peer == nil {
+		item.Peer = &peer
+		err = writeItemMetadataUnsafe(v.backend(), item, metadataHmacSecret)
+		if err != nil {
+			return fmt.Errorf("failed to write item metadata (%s): %v", item.Id, err)
+		}
+
+		v.items[item.Id] = item
+
+		return nil
+	} else if *item.Peer != peer {
+		log.Warn().Msgf("invalid peer for item (%s): %s", item.Id.String(), peer)
+		return errors.New("client credentials mismatch")
+	}
+
+	return nil
 }
 
 func (v *Vault) writeItemValueUnsafe(item Item, value *memguard.LockedBuffer) error {
@@ -539,8 +636,21 @@ func (v *Vault) decryptFromRestUnsafe(data []byte) (*memguard.LockedBuffer, erro
 func (v *Vault) encryptForRestUnsafe(data *memguard.LockedBuffer) ([]byte, error) {
 	var recipients []age.Recipient
 	recipients = append(recipients, v.primaryRecipient)
-	if v.recoveryRecipient != nil {
-		recipients = append(recipients, v.recoveryRecipient)
+
+	secret, err := v.metadataHmacSecret.Open()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to access metadata HMAC secret")
+	}
+
+	defer secret.Destroy()
+
+	recoveryRecipient, err := loadRecoveryRecipient(v.backend(), secret)
+	if err != nil {
+		log.Fatal().Err(err).Msg("error loading recovery recipient")
+	}
+
+	if recoveryRecipient != nil {
+		recipients = append(recipients, recoveryRecipient)
 	}
 
 	out := &bytes.Buffer{}

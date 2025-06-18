@@ -17,14 +17,14 @@ package vault
 
 import (
 	"bytes"
-	"filippo.io/age"
-	"github.com/awnumar/memguard"
-	"github.com/google/uuid"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"filippo.io/age"
+	"github.com/awnumar/memguard"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -204,10 +204,14 @@ func testSetRecoveryRecipient(t *testing.T, vault *Vault) {
 	// Test setting the recovery recipient
 	err = vault.SetRecoveryRecipient(*recoveryIdentity.Recipient())
 	assert.NoError(t, err)
-	assert.NotNil(t, vault.recoveryRecipient) // Recovery recipient should be set
+
+	secret, err := vault.metadataHmacSecret.Open()
+	assert.NoError(t, err)
 
 	// Verify that the recovery recipient is correctly set
-	assert.Equal(t, recoveryIdentity.Recipient(), vault.recoveryRecipient)
+	storedRecipient, err := loadRecoveryRecipient(vault.backend(), secret)
+	assert.NoError(t, err)
+	assert.Equal(t, recoveryIdentity.Recipient(), storedRecipient)
 
 	// Lock the vault
 	err = vault.Lock()
@@ -218,7 +222,9 @@ func testSetRecoveryRecipient(t *testing.T, vault *Vault) {
 	assert.Error(t, err) // Should return an error since the vault is locked
 
 	// Verify that the recovery recipient is still the same
-	assert.Equal(t, recoveryIdentity.Recipient(), vault.recoveryRecipient)
+	storedRecipient, err = loadRecoveryRecipient(vault.backend(), secret)
+	assert.NoError(t, err)
+	assert.Equal(t, recoveryIdentity.Recipient(), storedRecipient)
 }
 
 func TestCreateItem_Local(t *testing.T) {

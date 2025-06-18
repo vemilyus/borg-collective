@@ -17,14 +17,19 @@ package store
 
 import (
 	"errors"
-	"github.com/pelletier/go-toml/v2"
 	"os"
+
+	"github.com/Masterminds/semver/v3"
+	"github.com/pelletier/go-toml/v2"
 )
 
+var Version = semver.MustParse("0.0.0+devel")
+
 type Config struct {
-	StoragePath   string
-	ListenAddress string
-	Tls           *TlsConfig
+	StoragePath          string
+	ListenAddress        string
+	MetricsListenAddress *string
+	Tls                  *TlsConfig
 }
 
 type TlsConfig struct {

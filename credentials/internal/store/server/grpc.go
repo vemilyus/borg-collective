@@ -19,13 +19,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
+	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/vemilyus/borg-collective/credentials/internal/proto"
 	"github.com/vemilyus/borg-collective/credentials/internal/store/service"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -115,8 +118,9 @@ func (serv credStoreServer) DeleteVaultItems(deletion *proto.ItemDeletion, itemS
 	return nil
 }
 
-func (serv credStoreServer) ReadVaultItem(_ context.Context, request *proto.ItemRequest) (*proto.ItemValue, error) {
-	itemValue, err := serv.state.ReadVaultItem(request)
+func (serv credStoreServer) ReadVaultItem(ctx context.Context, request *proto.ItemRequest) (*proto.ItemValue, error) {
+	p, _ := peer.FromContext(ctx)
+	itemValue, err := serv.state.ReadVaultItem(request, p)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
@@ -140,6 +144,8 @@ func NewGrpcServer(state *service.State) *grpc.Server {
 	loggingOpts = append(loggingOpts, logging.WithLogOnEvents(logging.StartCall, logging.FinishCall))
 
 	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(proto.ZeroInterceptor()),
+		grpc.ChainStreamInterceptor(proto.ZeroStreamInterceptor()),
 		grpc.ChainUnaryInterceptor(logging.UnaryServerInterceptor(interceptorLogger(logger), loggingOpts...)),
 		grpc.ChainStreamInterceptor(logging.StreamServerInterceptor(interceptorLogger(logger), loggingOpts...)),
 	)
@@ -151,6 +157,8 @@ func NewGrpcServer(state *service.State) *grpc.Server {
 			state:                        state,
 		},
 	)
+
+	grpc_prometheus.Register(grpcServer)
 
 	return grpcServer
 }
